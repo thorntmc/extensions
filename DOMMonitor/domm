@@ -1,0 +1,388 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 20012-2013 Arista Networks, Inc.  All rights reserved.
+# Arista Networks, Inc. Confidential and Proprietary.
+#
+# Proactive / Predictive DOM monitoring
+#
+#    Version 2.0 4/18/2013
+#    Written by: 
+#       Mark Berly, Arista Networks
+#       Sean Flack, Arista Networks
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.1 - initial release
+#       1.2 - add SFP/QSFP serial number to the syslog messages
+#       1.3 - change to use absolute change in dBm instead of % change
+#       1.4 - add error checking and cumulative dBm average
+#       1.5 - make cumulative average optional
+#       2.0 - only monitor interfaces which are up
+#           - recompute base on link-up events
+#           - recompute base on consecutive polls resulted in logged messages
+#           - update format of log messages
+
+"""
+   DESCRIPTION
+      The DOM Monitor script enables the end user to set-up appropriate alerts,
+      allowing proactive notifications when Tx/Rx DOM power readings vary from
+      a fixed or a cumulative average baseline by a user-defined amount
+      (specified in dBm).
+
+   INSTALLATION
+      In order to install DOM Monitor, copy 'domm' to /mnt/flash.
+
+      DOM Monitor can then be started using:
+      e.g.
+         (bash:root)# /mnt/flash/domm [<options>] &
+      and you can use 'nohup' utility in order to make this persistent over ssh:
+      e.g.
+         (bash:root)# nohup /mnt/flash/domm [<options>] &      
+
+      See: 
+         (bash:root)# /mnt/flash/domm --help
+      for details about the command-line options.
+
+      In order to run DOM Monitor as a daemon (persistent after reboot), add
+      the following to the startup-config:
+         event-handler domm
+            trigger on-boot
+            action bash /mnt/flash/domm [<options>]
+            asynchronous
+      
+      DOM Monitor process name is 'domm', so standard Linux tools can be used
+      to stop and restart it with different options:
+      e.g.
+         (bash:root)# pgrep domm | xargs kill
+         (bash:root)# /mnt/flash/domm [<new-options>] &
+
+      Note that in order to make sure the DOM Monitor does not restart on
+      reboot / starts with a different config on reboot, the startup-config
+      has to be changed accordingly.
+
+      In order to uninstall DOM Monitor, use:
+         (bash:root)# rm /mnt/flash/domm
+         (bash:root)# pgrep domm | xargs kill              // if running
+
+   CONFIGURATION/DEBUGGING
+      The status of each XCVR is polled periodically (by default every 10s).
+      In order to change the polling interval, use the -p/--poll-interval option:
+      e.g.
+         (bash:root)# /mnt/flash/domm -p <seconds> ...
+
+      A log message is generated whenever the Tx/Rx power deviates from the
+      baseline by more than a certain threshold (tolerance), which by default
+      is 3dBm.  In order to change the tolerance level, use the -t/--tolerance
+      option:
+      e.g.
+         (bash:root)# /mnt/flash/domm -t <dBm> ...
+
+      The baseline can be either:
+         - fixed (default), computed as soon as the link comes up
+         - variable, computed as the cumulative average. This can be enabled by
+           using the -c/--cumulative-average option.
+           e.g.
+              (bash:root)# /mnt/flash/domm -c ...
+
+      If a number of consecutive polls (default=3) result in warning messages
+      being logged, the baseline is reset. The polls threshold can be controlled
+      via the -r/--rebase-poll-limit:
+      e.g.
+         (bash:root)# /mnt/flash/domm -r <consecutive-polls> ...
+      This feature can be disabled by setting the limit to zero.
+
+      In order to enable debugging output to stdout, use the '-d' command line 
+      option.
+      e.g.
+         (bash:root)# /mnt/flash/domm -d ...
+      Note that can be quite verbouse, so it is recommended that it is used 
+      with caution, and only for debugging purposes.
+
+   COMPATIBILITY
+      Version 2.0 has been developed and tested against EOS-4.11.3. Please 
+      reach out to support@aristanetworks.com if you want to run this against
+      a different EOS release.
+
+  LIMITATIONS
+     Current version will not monitor agile ports which have the link status
+     down.
+"""
+
+import datetime
+import optparse
+import time
+
+import Ark
+import EntityManager
+import Logging
+import Tac
+
+# Register as DOM Monitor with LogManager
+Ark.configureLogManager( 'domm' )
+
+# Define log messages
+Logging.logD( id='TRANSCEIVER_RX_POWER_CHANGE',
+              severity=Logging.logWarning,
+              format='%s (%s) RX power level has changed by %d dBm from baseline '
+                     '%d dBm (%s) to %d dBm (%s)',
+              explanation='The received optical power measured by the '
+                          'transceiver has deviated from its baseline.',
+              recommendedAction='Check the transceiver and associated connections.' )
+ 
+Logging.logD( id='TRANSCEIVER_TX_POWER_CHANGE',
+              severity=Logging.logWarning,
+              format='%s (%s) TX power level has changed by %d dBm from baseline '
+                     '%d dBm (%s) to %d dBm (%s)',
+              explanation='The transmitted optical power measured by the '
+                          'transceiver has deviated from its baseline.',
+              recommendedAction='Check the transceiver and associated connections.' )
+
+# Mount data from Sysdb
+em = EntityManager.Sysdb( 'ar' )
+mg = em.mountGroup()
+xcvrStatusDir_ = mg.mount( 'hardware/xcvr/status/all', 
+                           'Xcvr::AllStatusDir', 'r' )
+ethPhyIntfStatusDir =  mg.mount( 'interface/status/eth/phy',
+                                 'Interface::EthPhyIntfStatusDir', 'r' )
+mg.close( blocking=True )
+
+debug = False
+rebasePollLimit = None
+pollInterval = None
+tolerance = None
+useCumulativeAverageAsBase = False
+
+def _timeString():
+   ts = time.time()
+   return datetime.datetime.fromtimestamp( ts ).strftime( '%Y-%m-%d %H:%M:%S' )
+
+def _trace( msg ):
+   if debug:
+      print msg
+
+class XcvrStatusReactor( Tac.Notifiee ):
+   notifierTypeName = 'Xcvr::XcvrStatus'
+
+   def __init__( self, notifier ):
+      Tac.Notifiee.__init__( self, notifier )
+
+      self.xcvrStatus_ = notifier
+      self.xcvrConfig_ = notifier.xcvrConfig
+      
+      # { 'rx'|'tx' : { <laneId> : power } }
+      self.basepower_ = {}
+      self.basepower_[ 'rx' ] = {}
+      self.basepower_[ 'tx' ] = {}
+      self.baseTimestamp_ = None
+
+      self.linkUpOnPrevPoll_ = False
+      self.pollIterations_ = 0
+
+      # On consecutive logged messages, we reset the base
+      self.loggingPolls_ = 0
+
+      self.clockActivity_ = Tac.ClockNotifiee()
+      self.clockActivity_.handler = self.checkDomInfo
+      # Schedule my handler to get called immediately
+      self.clockActivity_.timeMin = 0
+
+      _trace( '%s: __init__' % self.xcvrStatus_.name )
+
+   def reset( self ):
+      self.basepower_[ 'rx' ].clear()
+      self.basepower_[ 'tx' ].clear()
+      self.pollIterations_ = 0
+      self.loggingPolls_ = 0
+      self.baseTimestamp_ = None
+
+   def checkDomInfo( self ):
+      _trace( '%s: checkDomInfo' % self.xcvrStatus_.name )
+
+      linkUp = self.linkUp()
+
+      if not self.linkUpOnPrevPoll_:
+         if linkUp:
+            # Recompute base every time the link comes back up
+            self.computeBase()
+      elif linkUp:
+         self.checkPower()
+      else:
+         # Reset everything if link goes down
+         self.reset()
+
+      self.linkUpOnPrevPoll_ = linkUp
+      self.clockActivity_.timeMin = Tac.now() + pollInterval
+
+   def linkUp( self ):
+      _trace( '%s: linkUp' % self.xcvrStatus_.name )
+
+      linkUp = False
+      for intfId, status in ethPhyIntfStatusDir.iteritems():
+         if intfId in self.xcvrConfig_.intfName.values():
+            if status.linkStatus != 'linkUp':
+               return False
+            else:
+               linkUp = True
+      
+      return linkUp
+
+   def checkPower( self ):
+      # pylint: disable-msg=E0602
+
+      _trace( '%s: checkPower' % self.xcvrStatus_.name )
+      self.pollIterations_ += 1
+      messageLogged = False
+
+      if useCumulativeAverageAsBase:
+         for laneId, rxBasePower in self.basepower_[ 'rx' ].iteritems():
+            rxPower = self.xcvrStatus_.domInfo[ laneId ].rxPower
+            self.basepower_[ 'rx' ][ laneId ] = \
+                rxBasePower + ( rxPower - rxBasePower ) / self.pollIterations_
+
+         for laneId, txBasePower in self.basepower_[ 'tx' ].iteritems():
+            txPower = self.xcvrStatus_.domInfo[ laneId ].txPower
+            self.basepower_[ 'tx' ][ laneId ] = \
+                txBasePower + ( txPower - txBasePower ) / self.pollIterations_
+
+      multipleLanes = len( self.xcvrConfig_.intfName ) > 1
+      for laneId in self.xcvrConfig_.intfName.iterkeys():
+         if not self.xcvrStatus_.domInfoValid[ laneId ]:
+            continue
+         
+         # RX
+         if laneId not in self.basepower_[ 'rx' ]:
+            continue
+         
+         maxRxPower = self.basepower_[ 'rx' ][ laneId ] + tolerance
+         minRxPower = self.basepower_[ 'rx' ][ laneId ] - tolerance
+         rxPower = self.xcvrStatus_.domInfo[ laneId ].rxPower
+         intfName = self.xcvrConfig_.intfName[ laneId ]
+         
+         _trace( 'rxBase: %f, rxPower: %f' % ( self.basepower_[ 'rx' ][ laneId ], 
+                                              rxPower ) )
+         if not ( minRxPower < rxPower < maxRxPower ):
+            dbChange = round ( rxPower - self.basepower_[ 'rx' ][ laneId ], 4 )
+            vendorSn = self.xcvrStatus_.vendorInfo.vendorSn.rstrip()
+            Logging.log( TRANSCEIVER_RX_POWER_CHANGE,
+                         # Only add lane info. for QSFPs
+                         intfName + ( '(lane %d)' % laneId 
+                                      if multipleLanes else '' ), 
+                         vendorSn, dbChange,
+                         round( self.basepower_[ 'rx' ][ laneId ], 4 ), 
+                         self.baseTimestamp_,
+                         round( rxPower, 4 ),
+                         _timeString() )
+            messageLogged = True
+
+         # TX
+         if laneId not in self.basepower_[ 'tx' ]:
+            continue
+         
+         maxTxPower = self.basepower_[ 'tx' ][ laneId ] + tolerance
+         minTxPower = self.basepower_[ 'tx' ][ laneId ] - tolerance
+         txPower = self.xcvrStatus_.domInfo[ laneId ].txPower
+         
+         _trace( 'txBase: %f, txPower: %f' % ( self.basepower_[ 'tx' ][ laneId ], 
+                                              txPower ) )
+         if not ( minTxPower < txPower < maxTxPower ):
+            dbChange = round ( txPower - self.basepower_[ 'tx' ][ laneId ], 4 )
+            vendorSn = self.xcvrStatus_.vendorInfo.vendorSn.rstrip()
+            Logging.log( TRANSCEIVER_TX_POWER_CHANGE,
+                         # Only add lane info. for QSFPs
+                         intfName + ( '(lane %d)' % laneId 
+                                      if multipleLanes else '' ), 
+                         vendorSn, dbChange,
+                         round( self.basepower_[ 'tx' ][ laneId ], 4 ), 
+                         self.baseTimestamp_,
+                         round( txPower, 4 ),
+                         _timeString() )
+            messageLogged = True
+
+      if not messageLogged:
+         self.loggingPolls_ = 0
+      else:
+         self.loggingPolls_ += 1
+
+      if rebasePollLimit and self.loggingPolls_ >= rebasePollLimit:
+         _trace( '%s: recomputing base' % self.xcvrStatus_.name )
+         self.computeBase()
+
+   def computeBase( self ):
+      _trace( '%s: computeBase' % self.xcvrStatus_.name )
+
+      self.reset()
+      self.baseTimestamp_ = _timeString()
+
+      for laneId in self.xcvrConfig_.intfName.iterkeys():
+
+         if not self.xcvrStatus_.domInfoValid[ laneId ]:
+            continue
+
+         domInfo = self.xcvrStatus_.domInfo[ laneId ]
+         txPower = domInfo.txPower
+         rxPower = domInfo.rxPower
+
+         # If an interface is shut then it will report a DOM value of
+         # '-inf'. In this case, do not record DOM info.
+         # with that DOM info
+         if txPower == float( '-inf' ) or rxPower == float( '-inf' ) :
+            self.basepower_[ 'rx' ].pop( laneId, None )
+            self.basepower_[ 'tx' ].pop( laneId, None )
+         else:
+            _trace( '%s: new RX base: %.4f' % ( self.xcvrStatus_.name, 
+                                              rxPower ) )
+            self.basepower_[ 'rx' ][ laneId ] = rxPower
+            
+            # Check if optic is a QSFP. if it is, then only get the
+            # rxPower value. Reporting txPower DOM data is not supported
+            # for QSFPs.
+            if 'qsfp' in self.xcvrStatus_.xcvrType.lower():
+               self.basepower_[ 'tx' ].pop( laneId, None )
+            else:
+               _trace( '%s: new TX base: %.4f' % ( self.xcvrStatus_.name, 
+                                                 txPower ) ) 
+               self.basepower_[ 'tx' ][ laneId ] = txPower
+
+def main():
+   Tac.setproctitle( 'domm' )
+
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options]'
+   op = optparse.OptionParser(usage=usage)
+   op.add_option( '-c', '--cumulative-average', dest='useCumulativeAverageAsBase', 
+                  action='store_true', help='use cumulative average as base' )
+   op.add_option( '-d', '--debug', dest='debug', action='store_true',
+                  help='print debug info' )
+   op.add_option( '-r', '--rebase-poll-limit', dest='rebasePollLimit',
+                  action='store', type='int', default=3, 
+                  help='limit of consecutive polls generating log messages, '
+                       'before resetting the base (default=3)' )
+   op.add_option( '-t', '--tolerance', dest='tolerance', action='store',
+                  type='float', default=3, help='variation (in dBm) which triggers '
+                  'messages to be logged (default=3)' )
+   op.add_option( '-p', '--poll-interval', dest='pollInterval', action='store',
+                  type='int', default=10, help='polling interval(default=10)' )
+
+   opts, _ = op.parse_args()
+ 
+   global debug, rebasePollLimit, pollInterval, tolerance, useCumulativeAverageAsBase
+   debug = opts.debug
+   rebasePollLimit = opts.rebasePollLimit
+   pollInterval = opts.pollInterval
+   tolerance = opts.tolerance
+   useCumulativeAverageAsBase = opts.useCumulativeAverageAsBase
+
+   if rebasePollLimit is not None and rebasePollLimit < 1:
+      op.error( "rebasePollLimit must be a positive number")
+   if pollInterval is not None and pollInterval < 0:
+      op.error( "pollInterval must be a positive number or zero")
+
+   _ = \
+       Tac.collectionChangeReactor( xcvrStatusDir_.xcvrStatus,
+                                    XcvrStatusReactor )
+   
+   # Run forever
+   Tac.runActivities()
+
+if __name__ == '__main__':
+   main()
