@@ -42,7 +42,7 @@
          (bash:root)# /mnt/flash/natp --help
       for details about the command-line options.
 
-      In order to uninstall the scriptg, use:
+      In order to uninstall the script, use:
          (bash:root)# rm /mnt/flash/natp
 
    CONFIGURATION
@@ -55,7 +55,7 @@
       You can schedule the script to run periodically using the Cli Scheduler.
       For example, in order to schedule the script to run every day at midnight,
       add the following to the startup-config:
-         schedule natp at 00:00:00 interval 1440 max-log-files 10 command  bash 
+         schedule natp at 00:00:00 interval 1440 max-log-files 10 command bash 
             /mnt/flash/natp <input-file> -e <email>
 
    COMPATIBILITY
@@ -85,14 +85,14 @@ def sendEmail( addr, subject, text, sender ):
 def main():
    # Create help string and parse cmd line
    usage = 'usage: %prog <input-filename> [options]'
-   op = optparse.OptionParser(usage=usage)
+   op = optparse.OptionParser( usage=usage )
    op.add_option( '-e', '--email', dest='email', action='store',
                   help='destination email for the report' )
    ( options, arguments ) = op.parse_args()
 
    # Check cmd line options
    if not arguments:
-      op.error( 'You need to specify an input filename' )
+      op.error( 'You need to specify an input filename.' )
    if len( arguments ) > 1:
       op.error( 'Too many input arguments.' )
    if not options.email:
@@ -105,14 +105,14 @@ def main():
       data = [ x for x in csv.DictReader( open( arguments[ 0 ], 'rb' ), 
                                           delimiter=',' ) ]
       if not data:
-         report += 'Failed to update NAT because there is no valid data ' \
+         report += 'Failed to update NAT because there is no data ' \
                    'in %s.' % arguments[ 0 ]         
    except ( TypeError, IOError ) as e:
       report += 'Failed to update NAT because loading new data ' \
                 'from %s failed: %s' % ( arguments[ 0 ], str( e ) )
 
    # Validate input data
-   if report == '':
+   if not report:
       keys = [ 'Interface',
                'Destination IP inside', 
                'Destination IP outside',
@@ -124,7 +124,7 @@ def main():
          if sorted( rule.keys() ) != sorted( keys ):
             report += 'Loading new NAT failed because of invalid ' \
                       'input file header:\n   %s' % str( sorted( rule.keys() ) )
-            report += 'Expected header:\n    %s' % sorted( keys )
+            report += 'Expected header:\n    %s' % str( sorted( keys ) )
             break
 
          if [ x for x in rule.values() if x is None ]:
@@ -151,15 +151,13 @@ def main():
          for staticNat in backupStaticNat[ name ].values():
             intfConfig.staticNat.addMember( staticNat )
 
-      # revert newly created objects
-
    def _natIntfConfig( intfName ):
       intfConfig = natConfig_.intfConfig.get( intfName )
       if not intfConfig:
          intfConfig = natConfig_.intfConfig.newMember( intfName )
       return intfConfig
 
-   if report == '':
+   if not report:
       # Mount data from Sysdb
       em = EntityManager.Sysdb( 'ar' )
       mg = em.mountGroup()
