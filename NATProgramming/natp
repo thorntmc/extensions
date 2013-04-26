@@ -198,14 +198,14 @@ def main():
          report += 'Loading new NAT failed because of exception: %s' % str( e )
          _revertNatConfig( backupStaticNat )
 
-   # Delete empty NAT configs
-   for intfName in natConfig_.intfConfig:
-      intfConfig = natConfig_.intfConfig[ intfName ]
-      if not intfConfig.staticNat and not intfConfig.dynamicNat:
-         del natConfig_.intfConfig[ intfName ]
+      # Delete empty NAT configs
+      for intfName in natConfig_.intfConfig:
+         intfConfig = natConfig_.intfConfig[ intfName ]
+         if not intfConfig.staticNat and not intfConfig.dynamicNat:
+            del natConfig_.intfConfig[ intfName ]
 
-   # Make sure all updates are sent to Sysdb before the script exits
-   Tac.flushEntityLog()
+      # Make sure all updates are sent to Sysdb before the script exits
+      Tac.flushEntityLog()
 
    # Report success status
    if options.email:
