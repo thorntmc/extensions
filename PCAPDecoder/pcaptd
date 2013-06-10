@@ -49,10 +49,6 @@
          -r, --recover-utc     show UTC time
          -t, --ticks           show HW timestamps as ticks
 
-      Notes:
-        - R: rollback
-        - K: key frame
-   
    COMPATIBILITY 
       Version 1.1 has been developed and tested against
       Python 2.7 on MacOS, but should work on any other operating
