@@ -49,6 +49,9 @@
          -r, --recover-utc     show UTC time
          -t, --ticks           show HW timestamps as ticks
 
+      Notes:
+        - R: rollback
+        - K: key frame
    
    COMPATIBILITY 
       Version 1.1 has been developed and tested against
