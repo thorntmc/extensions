@@ -139,7 +139,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
          print '\nUnable to open file %s: %s\n' % ( f, str( e ) )
          sys.exit()
 
-      f.write( ''.join( header ) + '\n' )
+      f.write( ' '.join( header ) + '\n' )
    else:
       print ' '.join( header )
 
