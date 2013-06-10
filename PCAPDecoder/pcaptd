@@ -85,6 +85,9 @@
            Packet with timestamp t5 will be decoded using mapping
            collected at t0, and not t4.
 
+      Because of the same issue, packets received before the first
+      key frame are not decoded.
+
 
       Rollover detection is using a 0.6s buffer in order to avoid
       false positives which might happen due the capture card
@@ -120,14 +123,14 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
       multiplier = TICK_LENGTH
       units = 'ns'
 
-   header = [ string.rjust( 'PCAP Stamp(s)', 19 ) if showPcap else '',
-              string.rjust( 'PCAP Delta(ns)', 16 ) if showPcap and showDelta else '',
-              string.rjust( 'HW Timestamp(%s)' % units, 19 ),
-              string.rjust( 'Delta(%s)' % units, 14 ) if showDelta else '',
-              string.rjust( 'UTC(ns)', 14 ) if showUTC else '',
-              string.rjust( 'UTC Delta(ns)', 14 ) if showUTC and showDelta else '',
-              string.rjust( 'UTC', 14 ) if showUTC else '',
-              string.rjust( 'Note', 10 ) ]
+   header = [ string.rjust( 'PCAP tstamp(s)', 18 ) if showPcap else '',
+              string.rjust( 'PCAP delta(ns)', 18 ) if showPcap and showDelta else '',
+              string.rjust( 'HW tstamp(%s)' % units, 18 ),
+              string.rjust( 'HW delta(%s)' % units, 18 ) if showDelta else '',
+              string.rjust( 'UTC(ns)', 20 ) if showUTC else '',
+              string.rjust( 'UTC delta(ns)', 15 ) if showUTC and showDelta else '',
+              string.rjust( 'UTC', 30 ) if showUTC and showDelta else '',
+              string.rjust( 'Note', 5 ) ]
 
    if filename:
       try:
@@ -138,7 +141,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
 
       f.write( ''.join( header ) + '\n' )
    else:
-      print ''.join( header )
+      print ' '.join( header )
 
    for [ pcapTs, pcapDelta, hwTicks, hwDelta, 
          utcTime, utcDelta, rollover, keyFrame ] in data:
@@ -153,24 +156,20 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
       utcString = datetime.utcfromtimestamp( 
                      utcTime / 10**9 ).strftime( '%Y-%m-%d %H:%M:%S.%f' )
 
-      row = [ string.rjust( '%1.6f' % pcapTs, 19 ) if showPcap else '',
-              string.rjust( '%1.2f' % pcapDelta 
-                            if pcapDelta
-                            else '', 16) if showPcap and showDelta else '',
-              string.rjust( '%1.2f' % ( hwTicks * multiplier ), 19 ),
-              string.rjust( '%1.2f' % ( hwDelta * multiplier ) 
-                            if hwDelta 
-                            else '', 14 ) if showDelta else '',
-              string.rjust( '%1.0f' % utcTime 
-                            if utcTime 
-                            else 'N/A', 19 ) if showUTC else '',
-              string.rjust( '%1.0f' % utcDelta 
-                            if utcTime 
-                            else 'N/A', 19 ) if showUTC  and showDelta else '',
-              string.rjust( utcString 
-                            if utcTime 
-                            else 'N/A', 19 ) if showUTC else '',
-              string.rjust( note, 7 ) ]
+      row = [ string.rjust( '%1.6f' % pcapTs, 18 ) 
+                 if showPcap else '',
+              string.rjust( '%1.6f' % pcapDelta if pcapDelta else '', 18 ) 
+                 if showPcap and showDelta else '',
+              string.rjust( '%1.2f' % ( hwTicks * multiplier ), 18 ),
+              string.rjust( '%1.2f' % ( hwDelta * multiplier ) if hwDelta else '', 18 ) 
+                 if showDelta else '',
+              string.rjust( '%1.0f' % utcTime if utcTime else 'N/A', 20 ) 
+                 if showUTC else '',
+              string.rjust( '%1.0f' % utcDelta if utcTime else 'N/A', 15 ) 
+                 if showUTC  and showDelta else '',
+              string.rjust( utcString if utcTime else 'N/A', 30 ) 
+                 if showUTC else '',
+              string.rjust( note, 5 ) ]
 
       if filename:
          f.write( ' '.join( row ) + '\n' )
@@ -242,7 +241,7 @@ def _readTimestamps( f, fcs ):
       eth = dpkt.ethernet.Ethernet( buf )
 
       # Key frame
-      if eth.ip.p == 253 and eth.ip.ttl == 64:
+      if eth.type == 2048 and eth.ip.p == 253 and eth.ip.ttl == 64:
 
          asicTime = int( '0x' + binascii.hexlify( eth.ip.data[ 0 : 8 ] ), 0 )
          utcTime = int( '0x' + binascii.hexlify( eth.ip.data[ 8 : 16 ] ), 0 )
