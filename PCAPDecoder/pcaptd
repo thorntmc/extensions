@@ -50,8 +50,9 @@
          -t, --ticks           show HW timestamps as ticks
 
       Notes:
-        - R: rollback
-        - K: key frame
+        - R:       rollback
+        - KEY:     key frame
+        - R/KEY:   rollback on key frame
    
    COMPATIBILITY 
       Version 1.1 has been developed and tested against
