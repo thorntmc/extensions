@@ -29,17 +29,18 @@
       your filesystem.
 
       PCAP Timestamp Decoder can then be started using:
-         (bash:root)# /mnt/flash/pcaptd [<options>] <input_pcap>
+         (bash:root)# <path-to-script>/pcaptd [<options>] <input_pcap>
 
    CONFIGURATION 
       By default, the decoder assumes that the input pcap
       file contains timestamps which replace the FCS. If the timestamp
       was added before the FCS, please use the '--fcs' command-line
       option.  
-      e.g.  (bash:root)# /mnt/flash/pcaptd --fcs <input_pcap>
+      e.g.  
+         (bash:root)# /mnt/flash/pcaptd --fcs <input_pcap>
 
       In order to print the results to a file, use the '--output-file'
-      option, This is recommended for large input pcap files.
+      option. This is recommended for large input pcap files.
 
       The following options can be used in order to change the output of 
       the script:
@@ -47,7 +48,7 @@
          -d, --delta           show delta between consecutive packets
          -p, --pcap-timestamps show pcap timestamps
          -r, --recover-utc     show UTC time
-         -t, --ticks           show HW timestamps as ticks
+         -t, --ticks           show hw timestamps as ticks
 
       Notes:
         - R:       rollback
@@ -75,7 +76,7 @@
       Decoding the UTC timestamp uses the information contained in the
       latest key frame which was processes. This might not be the
       'most recent' mapping between the hw timestamp and UTC time,
-      because that might arrive in the next key frame. This limitation
+      because that might arrive in the following key frame. This limitation
       will be addressed in subsequent releases.
 
       e.g. 
