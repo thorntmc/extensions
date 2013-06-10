@@ -1,0 +1,297 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 2013 Arista Networks, Inc.  All rights reserved.
+# Arista Networks, Inc. Confidential and Proprietary.
+#
+# PCAP Timestamp Decoder
+#
+#    Version 1.1 6/6/2013
+#    Written by: 
+#       John Peach, Arista Networks
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.0 - initial release
+#       1.1 - added key frame support
+#           - added command line options
+
+'''
+   DESCRIPTION
+      PCAP Timestamp Decoder enables users to decode the timestamps
+      applied by the Arista 7150 series switches.
+
+   INSTALLATION
+      Requirements: 
+         - Python 2.6 or later: http://www.python.org/
+         - dpkt: http://code.google.com/p/dpkt/
+
+      In order to install PCAP Timestamp Decoder, copy 'pcaptd' to
+      your filesystem.
+
+      PCAP Timestamp Decoder can then be started using:
+         (bash:root)# /mnt/flash/pcaptd [<options>] <input_pcap>
+
+   CONFIGURATION 
+      By default, the decoder assumes that the input pcap
+      file contains timestamps which replace the FCS. If the timestamp
+      was added before the FCS, please use the '--fcs' command-line
+      option.  
+      e.g.  (bash:root)# /mnt/flash/pcaptd --fcs <input_pcap>
+
+      In order to print the results to a file, use the '--output-file'
+      option, This is recommended for large input pcap files.
+
+      The following options can be used in order to change the output of 
+      the script:
+
+         -d, --delta           show delta between consecutive packets
+         -p, --pcap-timestamps show pcap timestamps
+         -r, --recover-utc     show UTC time
+         -t, --ticks           show HW timestamps as ticks
+
+   
+   COMPATIBILITY 
+      Version 1.1 has been developed and tested against
+      Python 2.7 on MacOS, but should work on any other operating
+      system supporting Python 2.6 or later. Please reach out to
+      support@aristanetworks.com for assistance if needed.
+
+   LIMITATIONS
+      The tool tries to detect a counter rollover (by checking if a
+      subsequent timestamp has a lower tick value than it
+      predecessor). However, this mechanism does not uncover periods
+      where the inter-timestamp delta is < 6.15s. This can result in
+      undetected rollovers, if:
+
+            6.15s < delta < (2 * 6.15 - previous timestamp)
+
+      Multiple rollovers cannot be tracked and may go undetected.
+
+
+      Decoding the UTC timestamp uses the information contained in the
+      latest key frame which was processes. This might not be the
+      'most recent' mapping between the hw timestamp and UTC time,
+      because that might arrive in the next key frame. This limitation
+      will be addressed in subsequent releases.
+
+      e.g. 
+           UTC mapping collected     t0
+           key frame sent            t1      
+           packet sent               t3
+           UTC mapping collected     t4
+           packet sent               t5
+           key frame sent            t6
+
+           Packet with timestamp t5 will be decoded using mapping
+           collected at t0, and not t4.
+
+
+      Rollover detection is using a 0.6s buffer in order to avoid
+      false positives which might happen due the capture card
+      reporting out-of-order packets. This means that rollovers where
+      the delay between packets is ~6.135s will not be detected. A
+      knob to turn this on/off will be added in subsequent releases.
+'''
+
+import binascii
+import dpkt
+import optparse
+import string
+import sys
+
+from datetime import datetime
+
+# Based on the clock rate (350Mhz)
+TICK_LENGTH = 2.857
+MAX_TICKS = 2**31
+
+# [ asicTime, utcTime ]
+ticksToUTC = []
+
+prevHwTicks = None
+prevPcapTime = None
+prevUtc = None
+
+def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=None ):
+
+   multiplier = 1
+   units = 'ticks'
+   if not showTicks:
+      multiplier = TICK_LENGTH
+      units = 'ns'
+
+   header = [ string.rjust( 'PCAP Stamp(s)', 19 ) if showPcap else '',
+              string.rjust( 'PCAP Delta(ns)', 16 ) if showPcap and showDelta else '',
+              string.rjust( 'HW Timestamp(%s)' % units, 19 ),
+              string.rjust( 'Delta(%s)' % units, 14 ) if showDelta else '',
+              string.rjust( 'UTC(ns)', 14 ) if showUTC else '',
+              string.rjust( 'UTC Delta(ns)', 14 ) if showUTC and showDelta else '',
+              string.rjust( 'UTC', 14 ) if showUTC else '',
+              string.rjust( 'Note', 10 ) ]
+
+   if filename:
+      try:
+         f = open( filename, 'w' )
+      except IOError, e:
+         print '\nUnable to open file %s: %s\n' % ( f, str( e ) )
+         sys.exit()
+
+      f.write( ''.join( header ) + '\n' )
+   else:
+      print ''.join( header )
+
+   for [ pcapTs, pcapDelta, hwTicks, hwDelta, 
+         utcTime, utcDelta, rollover, keyFrame ] in data:
+      note = ''
+      if rollover:
+         note = 'R'
+         if keyFrame:
+            note = 'R/KEY'
+      elif keyFrame:
+         note = 'KEY'
+
+      utcString = datetime.utcfromtimestamp( 
+                     utcTime / 10**9 ).strftime( '%Y-%m-%d %H:%M:%S.%f' )
+
+      row = [ string.rjust( '%1.6f' % pcapTs, 19 ) if showPcap else '',
+              string.rjust( '%1.2f' % pcapDelta 
+                            if pcapDelta
+                            else '', 16) if showPcap and showDelta else '',
+              string.rjust( '%1.2f' % ( hwTicks * multiplier ), 19 ),
+              string.rjust( '%1.2f' % ( hwDelta * multiplier ) 
+                            if hwDelta 
+                            else '', 14 ) if showDelta else '',
+              string.rjust( '%1.0f' % utcTime 
+                            if utcTime 
+                            else 'N/A', 19 ) if showUTC else '',
+              string.rjust( '%1.0f' % utcDelta 
+                            if utcTime 
+                            else 'N/A', 19 ) if showUTC  and showDelta else '',
+              string.rjust( utcString 
+                            if utcTime 
+                            else 'N/A', 19 ) if showUTC else '',
+              string.rjust( note, 7 ) ]
+
+      if filename:
+         f.write( ' '.join( row ) + '\n' )
+      else:
+         print ' '.join( row )
+
+   if filename:
+      f.close()
+
+def _timestampDetails( pcapTs, hwTicks ):
+   global prevHwTicks, prevPcapTime, prevUtc
+   
+   rollover = False
+   hwDelta = 0
+
+   if prevHwTicks is not None:
+      # We assume at least 1% buffer for rollover detection in order
+      # to avoid false positives (out-of-order packets).  Of course,
+      # this means that some rollovers (where the gap between packets
+      # ~6.135s) will remain undetected.
+      if prevHwTicks - hwTicks > ( MAX_TICKS / 100 ):
+         hwDelta = MAX_TICKS - prevHwTicks + hwTicks
+         rollover = True
+      else:
+         hwDelta = hwTicks - prevHwTicks
+   prevHwTicks = hwTicks
+
+   pcapDelta = 0
+   if prevPcapTime is not None:
+      pcapDelta = ( pcapTs - prevPcapTime ) * 10**9
+   prevPcapTime = pcapTs
+
+   utc = 0
+   if ticksToUTC:
+      [ asicTime, utcTime ] = ticksToUTC[ -1 ]
+      shortAsicTime = ( asicTime & 0x7FFFFFFF )
+
+      # Rollover (see previous comment)
+      if shortAsicTime - hwTicks > ( MAX_TICKS / 100 ):
+         diff = MAX_TICKS - shortAsicTime + hwTicks
+      else:
+         diff = hwTicks - shortAsicTime
+   
+      utc = utcTime + ( diff * TICK_LENGTH )
+
+   utcDelta = 0
+   if prevUtc:
+      utcDelta = ( utc - prevUtc )
+   prevUtc = utc
+
+   return [ pcapTs, pcapDelta, hwTicks, hwDelta, 
+            utc, utcDelta, rollover ]
+
+def _readTimestamps( f, fcs ):
+   global ticksToUTC
+
+   try:
+      f = open( f )
+   except IOError, e:
+      print '\nUnable to open file %s: %s\n' % ( f, str( e ) )
+      sys.exit()
+
+   # [ [ pcampTstamp, pcapDelta, hwTicks, hwDelta, 
+   #     utc, utcDelta, rollOver, keyFrame ] ]
+   data = []
+
+   print '\nLoading input file...\n'
+   for pcapTs, buf in dpkt.pcap.Reader( f ):
+      eth = dpkt.ethernet.Ethernet( buf )
+
+      # Key frame
+      if eth.ip.p == 253 and eth.ip.ttl == 64:
+
+         asicTime = int( '0x' + binascii.hexlify( eth.ip.data[ 0 : 8 ] ), 0 )
+         utcTime = int( '0x' + binascii.hexlify( eth.ip.data[ 8 : 16 ] ), 0 )
+         ticksToUTC += [ [ asicTime, utcTime ] ]
+
+         stamp =  int( '0x' + binascii.hexlify( eth.ip.data[ 25 : 32 ] ), 0 )
+         hwTicks = stamp & 0x7FFFFFFF
+         data += [ _timestampDetails( pcapTs, hwTicks ) + [ True ] ]
+
+      else:
+         if fcs:
+            stamp = int( '0x' + binascii.hexlify( buf[ -8 : -4 ] ), 0 )
+         else:
+            stamp = int( '0x' + binascii.hexlify( buf[ -4 : ] ), 0 )
+      
+         hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
+         data += [ _timestampDetails( pcapTs, hwTicks ) + [ False ] ]
+
+   return data
+
+def main():
+
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options] <input-filename>'
+   op = optparse.OptionParser(usage=usage)
+   op.add_option( '-f', '--fcs', dest='fcs', 
+                  action='store_true', help='pcap frames have valid fcs' )
+   op.add_option( '-d', '--delta', dest='delta', 
+                  action='store_true', help='show delta between consecutive '
+                                            'packets' )
+   op.add_option( '-p', '--pcap-timestamps', dest='pcap', 
+                  action='store_true', help='show pcap timestamps' )
+   op.add_option( '-o', '--output-file', dest='filename', 
+                  action='store', help='output file' )
+   op.add_option( '-r', '--recover-utc', dest='utc', 
+                  action='store_true', help='show UTC time' )
+   op.add_option( '-t', '--ticks', dest='ticks', 
+                  action='store_true', help='show hw timestamps as ticks' )
+   opts, arguments = op.parse_args()
+ 
+   # Check cmd line options
+   if not arguments:
+      op.error( 'You need to specify an input filename.' )
+   if len( arguments ) > 1:
+      op.error( 'Too many input arguments.' )
+
+   tsData = _readTimestamps( arguments[ 0 ], opts.fcs )
+   _printTimestamps( tsData, opts.pcap, opts.utc, opts.ticks, 
+                     opts.delta, opts.filename )
+
+if __name__ == '__main__':
+   main()
