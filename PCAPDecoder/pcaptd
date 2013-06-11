@@ -122,10 +122,8 @@ prevUtc = None
 
 def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=None ):
 
-   multiplier = 1
    units = 'ticks'
    if not showTicks:
-      multiplier = TICK_LENGTH
       units = 'ns'
 
    header = [ string.rjust( 'PCAP tstamp(s)', 18 ) if showPcap else '',
@@ -161,12 +159,19 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
       utcString = datetime.utcfromtimestamp( 
                      utcTime / 10.0**9 ).strftime( '%Y-%m-%d %H:%M:%S.%f' )
 
+      if showTicks:
+         hwString = '%d' % hwTicks
+         hwDeltaString = '%d' % hwDelta
+      else: 
+         hwString = '%1.2f' % ( hwTicks * TICK_LENGTH )
+         hwDeltaString = '%1.2f' % ( hwDelta * TICK_LENGTH )
+         
       row = [ string.rjust( '%1.6f' % pcapTs, 18 ) 
                  if showPcap else '',
               string.rjust( '%1.6f' % pcapDelta if pcapDelta else '', 18 ) 
                  if showPcap and showDelta else '',
-              string.rjust( '%1.2f' % ( hwTicks * multiplier ), 18 ),
-              string.rjust( '%1.2f' % ( hwDelta * multiplier ) if hwDelta else '', 18 ) 
+              string.rjust( hwString, 18 ),
+              string.rjust( hwDeltaString if hwDelta else '', 18 ) 
                  if showDelta else '',
               string.rjust( '%d' % utcTime if utcTime else 'N/A', 20 ) 
                  if showUTC else '',
