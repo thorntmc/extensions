@@ -175,7 +175,8 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
                  if showDelta else '',
               string.rjust( '%d' % utcTime if utcTime else 'N/A', 20 ) 
                  if showUTC else '',
-              string.rjust( '%1.0f' % utcDelta if utcTime else 'N/A', 15 ) 
+              string.rjust( ( '%1.0f' % utcDelta if utcDelta else '' ) 
+                            if utcTime else 'N/A', 15 ) 
                  if showUTC  and showDelta else '',
               string.rjust( utcString if utcTime else 'N/A', 30 ) 
                  if showUTC else '',
