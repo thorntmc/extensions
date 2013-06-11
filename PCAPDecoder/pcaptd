@@ -159,7 +159,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
          note = 'KEY'
 
       utcString = datetime.utcfromtimestamp( 
-                     utcTime / 10**9 ).strftime( '%Y-%m-%d %H:%M:%S.%f' )
+                     utcTime / 10.0**9 ).strftime( '%Y-%m-%d %H:%M:%S.%f' )
 
       row = [ string.rjust( '%1.6f' % pcapTs, 18 ) 
                  if showPcap else '',
@@ -168,7 +168,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
               string.rjust( '%1.2f' % ( hwTicks * multiplier ), 18 ),
               string.rjust( '%1.2f' % ( hwDelta * multiplier ) if hwDelta else '', 18 ) 
                  if showDelta else '',
-              string.rjust( '%1.0f' % utcTime if utcTime else 'N/A', 20 ) 
+              string.rjust( '%d' % utcTime if utcTime else 'N/A', 20 ) 
                  if showUTC else '',
               string.rjust( '%1.0f' % utcDelta if utcTime else 'N/A', 15 ) 
                  if showUTC  and showDelta else '',
@@ -217,8 +217,8 @@ def _timestampDetails( pcapTs, hwTicks ):
          diff = MAX_TICKS - shortAsicTime + hwTicks
       else:
          diff = hwTicks - shortAsicTime
-   
-      utc = utcTime + ( diff * TICK_LENGTH )
+
+      utc = utcTime + long( round( diff * TICK_LENGTH ) )
 
    utcDelta = 0
    if prevUtc:
