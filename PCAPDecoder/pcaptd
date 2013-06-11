@@ -48,6 +48,7 @@
          -d, --delta           show delta between consecutive packets
          -p, --pcap-timestamps show pcap timestamps
          -r, --recover-utc     show UTC time
+         -s, --src-ip          show source IP
          -t, --ticks           show hw timestamps as ticks
 
       Notes:
@@ -105,6 +106,7 @@ import binascii
 import dpkt
 import optparse
 import string
+import socket
 import sys
 
 from datetime import datetime
@@ -120,7 +122,8 @@ prevHwTicks = None
 prevPcapTime = None
 prevUtc = None
 
-def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=None ):
+def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, 
+                      showSourceIp, filename=None ):
 
    units = 'ticks'
    if not showTicks:
@@ -133,6 +136,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
               string.rjust( 'UTC(ns)', 20 ) if showUTC else '',
               string.rjust( 'UTC delta(ns)', 15 ) if showUTC and showDelta else '',
               string.rjust( 'UTC', 30 ) if showUTC and showDelta else '',
+              string.rjust( 'Source IP', 15 ) if showSourceIp else '',
               string.rjust( 'Note', 5 ) ]
 
    if filename:
@@ -147,7 +151,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
       print ' '.join( header )
 
    for [ pcapTs, pcapDelta, hwTicks, hwDelta, 
-         utcTime, utcDelta, rollover, keyFrame ] in data:
+         utcTime, utcDelta, rollover, keyFrame, srcIp ] in data:
       note = ''
       if rollover:
          note = 'R'
@@ -180,6 +184,8 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, filename=No
                  if showUTC  and showDelta else '',
               string.rjust( utcString if utcTime else 'N/A', 30 ) 
                  if showUTC else '',
+              string.rjust( socket.inet_ntoa( srcIp ) if srcIp else 'N/A', 15 ) 
+                 if showSourceIp else '',
               string.rjust( note, 5 ) ]
 
       if filename:
@@ -244,7 +250,7 @@ def _readTimestamps( f, fcs ):
       sys.exit()
 
    # [ [ pcampTstamp, pcapDelta, hwTicks, hwDelta, 
-   #     utc, utcDelta, rollOver, keyFrame ] ]
+   #     utc, utcDelta, rollOver, keyFrame, srcIp ] ]
    data = []
 
    print '\nLoading input file...\n'
@@ -260,7 +266,7 @@ def _readTimestamps( f, fcs ):
 
          stamp =  int( '0x' + binascii.hexlify( eth.ip.data[ 25 : 32 ] ), 0 )
          hwTicks = stamp & 0x7FFFFFFF
-         data += [ _timestampDetails( pcapTs, hwTicks ) + [ True ] ]
+         data += [ _timestampDetails( pcapTs, hwTicks ) + [ True, eth.ip.src ] ]
 
       else:
          if fcs:
@@ -269,7 +275,8 @@ def _readTimestamps( f, fcs ):
             stamp = int( '0x' + binascii.hexlify( buf[ -4 : ] ), 0 )
       
          hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
-         data += [ _timestampDetails( pcapTs, hwTicks ) + [ False ] ]
+         data += [ _timestampDetails( pcapTs, hwTicks ) + 
+                   [ False, eth.ip.src if eth.type == 2048 else None ] ]
 
    return data
 
@@ -289,6 +296,8 @@ def main():
                   action='store', help='output file' )
    op.add_option( '-r', '--recover-utc', dest='utc', 
                   action='store_true', help='show UTC time' )
+   op.add_option( '-s', '--src-ip', dest='src', 
+                  action='store_true', help='show source IP' )
    op.add_option( '-t', '--ticks', dest='ticks', 
                   action='store_true', help='show hw timestamps as ticks' )
    opts, arguments = op.parse_args()
@@ -301,7 +310,7 @@ def main():
 
    tsData = _readTimestamps( arguments[ 0 ], opts.fcs )
    _printTimestamps( tsData, opts.pcap, opts.utc, opts.ticks, 
-                     opts.delta, opts.filename )
+                     opts.delta, opts.src, opts.filename )
 
 if __name__ == '__main__':
    main()
