@@ -220,7 +220,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
       if keyFrame:
          vlanOrDevIdString = \
              '%d(%s)' % ( vlanOrDevId, 
-                          ','.join( [ str( vlanToDevId[ x ] ) 
+                          ','.join( [ str( x ) 
                                       for x in vlanToDevId 
                                       if vlanToDevId[ x ] == vlanOrDevId ] ) )
       else:
