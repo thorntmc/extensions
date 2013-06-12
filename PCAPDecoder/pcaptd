@@ -14,6 +14,7 @@
 #       1.0 - initial release
 #       1.1 - added key frame support
 #           - added command line options
+#       2.0 - added support for devId-VLAN mapping
 
 '''
    DESCRIPTION
@@ -28,7 +29,13 @@
       In order to install PCAP Timestamp Decoder, copy 'pcaptd' to
       your filesystem.
 
-      PCAP Timestamp Decoder can then be started using:
+      Define the mapping between the device id in the key frames and the
+      VLANs corresponding to the packets timestamped through that device
+      in the highlighted section below, at the beginning of the script.
+
+      Once the mapping is configured, the PCAP Timestamp Decoder can
+      then be started using:
+      
          (bash:root)# <path-to-script>/pcaptd [<options>] <input_pcap>
 
    CONFIGURATION 
@@ -102,6 +109,27 @@
       knob to turn this on/off will be added in subsequent releases.
 '''
 
+
+
+# ------------------------------------------------------------
+# !!! INSERT deviceId -> VLAN mapping below !!!
+# e.g. 
+#    VLAN10 timestamped through device 1
+#    VLAN20 and VLAN30 timestamped through device 2
+#
+# vlanToDevId = {}
+# vlanToDevId[ 1 ] = 10
+# vlanToDevId[ 2 ] = 20
+# vlanToDevId[ 2 ] = 30
+
+vlanToDevId = {}
+vlanToDevId[ 10 ] = 10
+vlanToDevId[ 0 ] = 20
+#-------------------------------------------------------------
+
+
+
+
 import binascii
 import dpkt
 import optparse
@@ -115,12 +143,23 @@ from datetime import datetime
 TICK_LENGTH = 2.857
 MAX_TICKS = 2**31
 
-# [ asicTime, utcTime ]
-ticksToUTC = []
+# { deviceId : [ asicTime, utcTime ] }
+ticksToUTC = {}
 
-prevHwTicks = None
-prevPcapTime = None
-prevUtc = None
+# { deviceId : <value> }
+prevHwTicks = {}
+prevPcapTime = {}
+prevUtc = {}
+
+class VLANEthernet( dpkt.ethernet.Ethernet ):
+    __hdr__ = (
+        ( 'dst', '6s', '' ),
+        ( 'src', '6s', '' ),
+        ( '__VLAN__', 'H', dpkt.ethernet.ETH_TYPE_8021Q ),
+        ( 'vlan', 'H', 1 ),
+        ( 'type', 'H', dpkt.ethernet.ETH_TYPE_IP )
+        )
+    _typesw = {}
 
 def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta, 
                       showSourceIp, filename=None ):
@@ -129,14 +168,21 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
    if not showTicks:
       units = 'ns'
 
-   header = [ string.rjust( 'PCAP tstamp(s)', 18 ) if showPcap else '',
-              string.rjust( 'PCAP delta(ns)', 18 ) if showPcap and showDelta else '',
+   header = [ string.rjust( 'PCAP tstamp(s)', 18 ) 
+                 if showPcap else '',
+              string.rjust( 'PCAP delta(ns)', 18 ) 
+                 if showPcap and showDelta else '',
               string.rjust( 'HW tstamp(%s)' % units, 18 ),
-              string.rjust( 'HW delta(%s)' % units, 18 ) if showDelta else '',
+              string.rjust( 'HW delta(%s)' % units, 18 ) 
+                 if showDelta else '',
               string.rjust( 'UTC(ns)', 20 ) if showUTC else '',
-              string.rjust( 'UTC delta(ns)', 15 ) if showUTC and showDelta else '',
-              string.rjust( 'UTC', 30 ) if showUTC and showDelta else '',
-              string.rjust( 'Source IP', 15 ) if showSourceIp else '',
+              string.rjust( 'UTC delta(ns)', 15 ) 
+                 if showUTC and showDelta else '',
+              string.rjust( 'UTC', 30 ) 
+                 if showUTC and showDelta else '',
+              string.rjust( 'Source IP', 15 ) 
+                 if showSourceIp else '',
+              string.rjust( 'VLAN/DeviceId(VLANs)', 20 ),
               string.rjust( 'Note', 5 ) ]
 
    if filename:
@@ -151,7 +197,8 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
       print ' '.join( header )
 
    for [ pcapTs, pcapDelta, hwTicks, hwDelta, 
-         utcTime, utcDelta, rollover, keyFrame, srcIp ] in data:
+         utcTime, utcDelta, rollover, keyFrame, 
+         srcIp, vlanOrDevId ] in data:
       note = ''
       if rollover:
          note = 'R'
@@ -170,6 +217,14 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
          hwString = '%1.2f' % ( hwTicks * TICK_LENGTH )
          hwDeltaString = '%1.2f' % ( hwDelta * TICK_LENGTH )
          
+      if keyFrame:
+         vlanOrDevIdString = '%d(%s)' % ( vlanOrDevId, 
+                                          ','.join( [ str( vlanToDevId[ x ] ) 
+                                                      for x in vlanToDevId 
+                                                      if vlanToDevId[ x ] == vlanOrDevId ] ) )
+      else:
+         vlanOrDevIdString = 'VLAN%s' % vlanOrDevId
+
       row = [ string.rjust( '%1.6f' % pcapTs, 18 ) 
                  if showPcap else '',
               string.rjust( '%1.6f' % pcapDelta if pcapDelta else '', 18 ) 
@@ -186,6 +241,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
                  if showUTC else '',
               string.rjust( socket.inet_ntoa( srcIp ) if srcIp else 'N/A', 15 ) 
                  if showSourceIp else '',
+              string.rjust( vlanOrDevIdString, 20 ),
               string.rjust( note, 5 ) ]
 
       if filename:
@@ -196,32 +252,41 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
    if filename:
       f.close()
 
-def _timestampDetails( pcapTs, hwTicks ):
+def _timestampDetails( pcapTs, hwTicks, vlan=None, deviceId=None, key=False ):
    global prevHwTicks, prevPcapTime, prevUtc
-   
+
+   if key:
+      assert deviceId != None
+   else:
+      assert vlan != None
+
    rollover = False
    hwDelta = 0
 
-   if prevHwTicks is not None:
+   devId = deviceId
+   if not key:
+      devId = vlanToDevId[ vlan ]
+
+   if devId in prevHwTicks:
       # We assume at least 1% buffer for rollover detection in order
       # to avoid false positives (out-of-order packets).  Of course,
       # this means that some rollovers (where the gap between packets
       # ~6.135s) will remain undetected.
-      if prevHwTicks - hwTicks > ( MAX_TICKS / 100 ):
-         hwDelta = MAX_TICKS - prevHwTicks + hwTicks
+      if prevHwTicks[ devId ] - hwTicks > ( MAX_TICKS / 100 ):
+         hwDelta = MAX_TICKS - prevHwTicks[ devId ] + hwTicks
          rollover = True
       else:
-         hwDelta = hwTicks - prevHwTicks
-   prevHwTicks = hwTicks
+         hwDelta = hwTicks - prevHwTicks[ devId ]
+   prevHwTicks[ devId ] = hwTicks
 
    pcapDelta = 0
-   if prevPcapTime is not None:
-      pcapDelta = ( pcapTs - prevPcapTime ) * 10**9
-   prevPcapTime = pcapTs
+   if devId in prevPcapTime:
+      pcapDelta = ( pcapTs - prevPcapTime[ devId ] ) * 10**9
+   prevPcapTime[ devId ] = pcapTs
 
    utc = 0
-   if ticksToUTC:
-      [ asicTime, utcTime ] = ticksToUTC[ -1 ]
+   if devId in ticksToUTC:
+      [ asicTime, utcTime ] = ticksToUTC[ devId ][ -1 ]
       shortAsicTime = ( asicTime & 0x7FFFFFFF )
 
       # Rollover (see previous comment)
@@ -233,9 +298,9 @@ def _timestampDetails( pcapTs, hwTicks ):
       utc = utcTime + long( round( diff * TICK_LENGTH ) )
 
    utcDelta = 0
-   if prevUtc:
-      utcDelta = ( utc - prevUtc )
-   prevUtc = utc
+   if devId in prevUtc and prevUtc[ devId ]:
+      utcDelta = ( utc - prevUtc[ devId ] )
+   prevUtc[ devId ] = utc
 
    return [ pcapTs, pcapDelta, hwTicks, hwDelta, 
             utc, utcDelta, rollover ]
@@ -250,37 +315,50 @@ def _readTimestamps( f, fcs ):
       sys.exit()
 
    # [ [ pcampTstamp, pcapDelta, hwTicks, hwDelta, 
-   #     utc, utcDelta, rollOver, keyFrame, srcIp ] ]
+   #     utc, utcDelta, rollOver, keyFrame, srcIp, 
+   #     vlan/deviceId ] ]
    data = []
 
    print '\nLoading input file...\n'
    for pcapTs, buf in dpkt.pcap.Reader( f ):
       eth = dpkt.ethernet.Ethernet( buf )
+      vlan = VLANEthernet( buf ).vlan
 
       # Key frame
       if eth.type == 2048 and eth.ip.p == 253 and eth.ip.ttl == 64:
 
          asicTime = int( '0x' + binascii.hexlify( eth.ip.data[ 0 : 8 ] ), 0 )
          utcTime = int( '0x' + binascii.hexlify( eth.ip.data[ 8 : 16 ] ), 0 )
-         ticksToUTC += [ [ asicTime, utcTime ] ]
+         deviceId = int( '0x' + binascii.hexlify( eth.ip.data[ 40 : 42 ] ), 0 )
+
+         if deviceId not in ticksToUTC:
+            ticksToUTC[ deviceId ] = []
+         ticksToUTC[ deviceId ] += [ [ asicTime, utcTime ] ]
 
          stamp =  int( '0x' + binascii.hexlify( eth.ip.data[ 25 : 32 ] ), 0 )
          hwTicks = stamp & 0x7FFFFFFF
-         data += [ _timestampDetails( pcapTs, hwTicks ) + [ True, eth.ip.src ] ]
-
+         data += [ _timestampDetails( pcapTs, hwTicks, deviceId=deviceId, key=True ) + 
+                   [ True, eth.ip.src, deviceId ] ]
       else:
+         # Ignore packets which don't belong to the configured VLANs
+         if vlan not in vlanToDevId:
+            continue
+
          if fcs:
             stamp = int( '0x' + binascii.hexlify( buf[ -8 : -4 ] ), 0 )
          else:
             stamp = int( '0x' + binascii.hexlify( buf[ -4 : ] ), 0 )
       
          hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
-         data += [ _timestampDetails( pcapTs, hwTicks ) + 
-                   [ False, eth.ip.src if eth.type == 2048 else None ] ]
+         data += [ _timestampDetails( pcapTs, hwTicks, vlan=vlan ) + 
+                   [ False, eth.ip.src if eth.type == 2048 else None, vlan ] ]
 
    return data
 
 def main():
+   if not vlanToDevId:
+      print 'Please configure the deviceId->VLAN mapping at the top of the script!' 
+      sys.exit()
 
    # Create help string and parse cmd line
    usage = 'usage: %prog [options] <input-filename>'
