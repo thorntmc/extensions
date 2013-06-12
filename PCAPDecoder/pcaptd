@@ -189,7 +189,7 @@ def _printTimestamps( data, showPcap, showUTC, showTicks, showDelta,
       try:
          f = open( filename, 'w' )
       except IOError, e:
-         print '\nUnable to open file %s: %s\n' % ( f, str( e ) )
+         print '\nUnable to open file %s: %s\n' % ( filename, str( e ) )
          sys.exit()
 
       f.write( ' '.join( header ) + '\n' )
