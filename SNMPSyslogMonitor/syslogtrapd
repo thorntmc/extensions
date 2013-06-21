@@ -14,13 +14,13 @@
 #       1.0 - initial release
 
 '''
-   DESCRIPTION
+   DESCRIPTION 
       The SNMP Sylog Monitor script enables users to automatically
-      send SNMP notifications whenever EOS-specific syslog messages
-      are being logged.
+      send SNMP 'syslogMsgNotification' (RFC5676) notifications,
+      whenever EOS-specific syslog messages are being logged.
 
-      The notifications will be sent to all configured recipients, if
-      SNMP is enabled.
+      The notifications will be sent to all configured notification
+      recipients, if SNMP is enabled.
 
    INSTALLATION
       In order to install SNMP Syslog Monitor, copy 'syslogtrapd' to
@@ -68,11 +68,6 @@
       Note that can be quite verbouse, so it is recommended that it is
       used with caution, and only for debugging purposes.
 
-      By default, the SNMP Syslog Monitor generates
-      'syslogMsgNotification' (RFC5676) notifications. A custom trap
-      can be generated using the -t/--trap-oid prefix:
-         (bash:root)# /mnt/flash/syslogtrapd -t '1.3.6.1.4.1.9.9.41.2.0.1'
-
       The syslog messages in /var/log/eos are polled periodically (by
       default every second).  In order to change the polling interval,
       use the -p/--poll-interval option:
@@ -80,9 +75,9 @@
          (bash:root)# /mnt/flash/syslogtrapd -p <seconds> ...
 
    COMPATIBILITY 
-      Version 1.0 has been developed and tested against EOS-4.11.5. Please 
-      reach out to support@aristanetworks.com if you want to run this against
-      a different EOS release.
+      Version 1.0 has been developed and tested against
+      EOS-4.11.5. Please reach out to support@aristanetworks.com if
+      you want to run this against a different EOS release.
 
    LIMITATIONS
       The following OID in 'syslogMsgNotification' are not supported
@@ -92,10 +87,6 @@
          syslogMsgAppName
          syslogMsgProcID
          syslogMsgSDParams
-
-      The uptime in the custom trap represents the time (in units o
-      hundredth of a second) since the system started, computed when the 
-      notification is generated.
 '''
 
 import optparse
