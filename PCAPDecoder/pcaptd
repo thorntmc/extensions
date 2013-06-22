@@ -115,7 +115,8 @@
 # vlanToDevId[ 2 ] = 30
 
 vlanToDevId = {}
-vlanToDevId[ 17664 ] = 0
+vlanToDevId[ 10 ] = 10
+vlanToDevId[ 20 ] = 20
 #-------------------------------------------------------------
 
 
@@ -289,7 +290,6 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
                   utc = _decodeValue( hwTicks, nextKf )
             else:
                # nextKf rollover
-               assert k1 > k2
                if kf:
                   utc = _decodeValue( hwTicks, kf )            
          elif hwTicks < k2:
