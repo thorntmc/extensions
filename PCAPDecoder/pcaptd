@@ -63,7 +63,7 @@
          -t, --ticks           show hw timestamps as ticks
 
       The 'Notes' column can have one of the following values:
-        - R:       rollback
+        - R:       rollover
         - KEY:     key frame
 
      The script can create a new pcap file, identical with the input
@@ -93,6 +93,13 @@
       timestamp accuracy will be microseconds. This is because libpcap
       does not support nanosecond precision.  If nanosecond precision
       is desired, use the '--utc-details' option.
+
+      Both the keyframe which arrived before a packet and the one
+      which arrived after a packet are needed in order to precisely
+      decode UTC. If either of the two is unavailable, then the
+      timestamp in the packet will not be decoded. In some rare
+      circumstances, two keyframes in advance are required for
+      decoding UTC in a packet.
 '''
 
 
@@ -103,14 +110,12 @@
 #    VLAN10 timestamped through device 1
 #    VLAN20 and VLAN30 timestamped through device 2
 #
-# vlanToDevId = {}
 # vlanToDevId[ 1 ] = 10
 # vlanToDevId[ 2 ] = 20
 # vlanToDevId[ 2 ] = 30
 
 vlanToDevId = {}
-vlanToDevId[ 10 ] = 10
-vlanToDevId[ 20 ] = 20
+vlanToDevId[ 17664 ] = 0
 #-------------------------------------------------------------
 
 
@@ -216,27 +221,27 @@ def _printTimestamps( pcapData, showPcap, showUTC, showTicks, showDelta,
          vlanOrDevIdString = 'VLAN%s' % pcap.vlanOrDevId
 
       row = [ string.rjust( '%1.6f' % pcap.timestamp.pcapTs
-                            if pcap.timestamp.pcapTs else 'N/A', 18 ) 
+                            if pcap.timestamp.pcapTs else '', 18 ) 
                  if showPcap else '',
               string.rjust( '%1.6f' % pcap.timestamp.pcapDelta 
-                            if pcap.timestamp.pcapDelta else 'N/A', 18 ) 
+                            if pcap.timestamp.pcapDelta else '', 18 ) 
                  if showPcap and showDelta else '',
               string.rjust( hwString, 18 ),
               string.rjust( hwDeltaString
-                            if pcap.timestamp.hwDelta else 'N/A', 18 )
+                            if pcap.timestamp.hwDelta else '', 18 )
                  if showDelta else '',
               string.rjust( '%d' % pcap.timestamp.utc 
-                            if pcap.timestamp.utc else 'N/A', 20 ) 
+                            if pcap.timestamp.utc else '', 20 ) 
                  if showUTC else '',
               string.rjust( ( '%1.0f' % pcap.timestamp.utcDelta 
-                              if pcap.timestamp.utcDelta else 'N/A' ) 
-                            if pcap.timestamp.utc else 'N/A', 15 ) 
+                              if pcap.timestamp.utcDelta else '' ) 
+                            if pcap.timestamp.utc else '', 15 ) 
                  if showUTC  and showDelta else '',
               string.rjust( utcString 
-                            if pcap.timestamp.utc else 'N/A', 30 ) 
+                            if pcap.timestamp.utc else '', 30 ) 
                  if showUTC else '',
               string.rjust( socket.inet_ntoa( pcap.srcIp ) 
-                            if pcap.srcIp else 'N/A', 15 ) 
+                            if pcap.srcIp else '', 15 ) 
                  if showSourceIp else '',
               string.rjust( vlanOrDevIdString, 20 ),
               string.rjust( note, 5 ) ]
@@ -265,61 +270,67 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
 
    if kfIndex:
       kf = keyframes[ devId ][ kfIndex ]
-      if ( kfIndex - 1 ):
+      if ( kfIndex - 1 ) in  keyframes[ devId ]:
          prevKf = keyframes[ devId ][ kfIndex - 1 ]
-      if ( kfIndex + 1 ) in  keyframes:
+      if ( kfIndex + 1 ) in  keyframes[ devId ]:
          nextKf = keyframes[ devId ][ kfIndex + 1 ]
 
    k1 = kf[ 0 ] if kf else None
    k2 = nextKf[ 0 ] if nextKf else None
 
    utc = 0
-   if k1 < hwTicks:
-      if hwTicks > k2:
-         if k1 < k2:
-            # nextKf was timestamped first, but packet egressed first
-            # out of the asi, because of congestion
-            if nextKf:
-               utc = _decodeValue( hwTicks, nextKf )
-         else:
-            # nextKf rollover
-            assert k1 > k2
-            if kf:
-               utc = _decodeValue( hwTicks, kf )            
-      elif hwTicks < k2:
-         if k1 < k2:
-            # basic case
-            if kf:
-               utc = _decodeValue( hwTicks, kf )
-         else:
-            assert False
-   elif k1 > hwTicks:
-      if hwTicks > k2:
-         if k1 < k2:
-            assert False
-         else:
-            # nextKf rollover, packet timestamped within startup offser of kf
-            assert k1 > k2
-            if prevKf:
-               utc = _decodeValue( hwTicks, prevKf )            
-      elif hwTicks < k2:
-         if k1 < k2:
-            # packet timestamped within startup offser of kf
-            if prevKf:
-               utc = _decodeValue( hwTicks, prevKf )
-         else:
-            assert k1 > k2
-            # rollover - both packet and nextKf
-            if kf:
-               utc = _decodeValue( hwTicks, kf )
-   elif k1 == hwTicks:
-      if kf:
-         utc = kf[ 1 ]
-   elif k2 == hwTicks:
-      if nextKf:
-         utc = nextKf[ 1 ]
-   else:
-      assert False
+   if k1 and k2:
+      if k1 < hwTicks:
+         if hwTicks > k2:
+            if k1 < k2:
+               # nextKf was timestamped first, but packet egressed first
+               # out of the asi, because of congestion
+               if nextKf:
+                  utc = _decodeValue( hwTicks, nextKf )
+            else:
+               # nextKf rollover
+               assert k1 > k2
+               if kf:
+                  utc = _decodeValue( hwTicks, kf )            
+         elif hwTicks < k2:
+            if k1 < k2:
+               # basic case
+               if kf:
+                  utc = _decodeValue( hwTicks, kf )
+            else:
+               assert False
+      elif k1 > hwTicks:
+         if hwTicks > k2:
+            if k1 < k2:
+               assert False
+            else:
+               assert k1 > k2
+               if hwTicks - k2 > k1 - hwTicks:
+                  # nextKf rollover, packet timestamped within startup offser of kf
+                  if prevKf:
+                     utc = _decodeValue( hwTicks, prevKf )            
+               else:
+                  # nexKf rollover and timestamped first, packet rollover 
+                  # and egressed first
+                  utc = _decodeValue( hwTicks, nextKf )
+         elif hwTicks < k2:
+            if k1 < k2:
+               # packet timestamped within startup offser of kf
+               if prevKf:
+                  utc = _decodeValue( hwTicks, prevKf )
+            else:
+               assert k1 > k2
+               # rollover - both packet and nextKf
+               if kf:
+                  utc = _decodeValue( hwTicks, kf )
+      elif k1 == hwTicks:
+         if kf:
+            utc = kf[ 1 ]
+      elif k2 == hwTicks:
+         if nextKf:
+            utc = nextKf[ 1 ]
+      else:
+         assert False
 
    rollover = False
    hwDelta = 0
@@ -417,7 +428,11 @@ def _readPcap( inputFile, fcs, outputFile ):
             pcapWriter.writepkt( buf, ts=0 )
       else:
          # Ignore packets which don't belong to the configured VLANs
-         vlan = VLANEthernet( buf ).vlan
+         try:
+            vlan = VLANEthernet( buf ).vlan
+         except Exception, e:
+            continue
+
          if vlan not in vlanToDevId:
             continue
 
