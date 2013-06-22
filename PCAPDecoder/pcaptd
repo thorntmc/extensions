@@ -344,7 +344,7 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
          rollover = True
    prevHwTicks[ devId ] = hwTicks
 
-   if devId in prevPcapTime:
+   if devId in prevPcapTime and prevPcapTime[ devId ]:
       pcapDelta = ( pcapTs - prevPcapTime[ devId ] ) * 10**9
    prevPcapTime[ devId ] = pcapTs
 
