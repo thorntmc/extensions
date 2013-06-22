@@ -483,7 +483,7 @@ def main():
    if opts.detailsFilename and not opts.utcDetails:
       op.error( 'Output filename specified, but generating UTC decode '
                 'details is not enabled. Please use the "-u" option in '
-                'order to enabel that.' )
+                'order to enable that.' )
 
    pcapData = _readPcap( arguments[ 0 ], opts.fcs,
                          opts.pcapFilename )
