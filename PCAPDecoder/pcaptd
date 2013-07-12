@@ -195,7 +195,7 @@ def _printTimestamps( pcapData, showPcap, showUTC, showTicks, showDelta,
               string.rjust( 'UTC delta(ns)', 15 ) 
                  if showUTC and showDelta else '',
               string.rjust( 'UTC', 30 ) 
-                 if showUTC and showDelta else '',
+                 if showUTC and showUTC else '',
               string.rjust( 'Source IP', 15 ) 
                  if showSourceIp else '',
               string.rjust( 'VLAN/DeviceId(VLANs)', 20 ),
