@@ -58,7 +58,7 @@
       with caution, and only for debugging purposes.
 
    COMPATIBILITY
-      Version 1.0 has been developed and tested against EOS-4.11.5. Please 
+      Version 1.0 has been developed and tested against EOS-4.11.1-5. Please 
       reach out to support@aristanetworks.com if you want to run this against
       a different EOS release.
 """
