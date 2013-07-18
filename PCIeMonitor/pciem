@@ -1,0 +1,154 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 2012-2013 Arista Networks, Inc.  All rights reserved.
+#
+# PCIe Monitor
+#
+#    Version 1.0 18/07/2013
+#    Written by: 
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.1 - initial release
+
+"""
+   DESCRIPTION
+      The PCIe Monitor script enables proactive syslog notifications when 
+      PCIe errors are detected.
+
+   INSTALLATION
+      In order to install PCIe Monitor, copy 'pciem' to /mnt/flash.
+
+      PCIe Monitor can then be started using:
+         (bash:root)# /mnt/flash/pciem [<options>] &
+      and you can use 'nohup' utility in order to make this persistent over ssh:
+         (bash:root)# nohup /mnt/flash/pciem [<options>] &      
+
+      See: 
+         (bash:root)# /mnt/flash/pciem --help
+      for details about the command-line options.
+
+      In order to run PCIe Monitor as a daemon (persistent after reboot), add
+      the following to the startup-config:
+         event-handler pciem
+            trigger on-boot
+            action bash /mnt/flash/pciem [<options>]
+            asynchronous
+      
+      PCIe Monitor process name is 'pciem', so standard Linux tools can be used
+      to stop and restart it with different options:
+      e.g.
+         (bash:root)# pkill pciem
+         (bash:root)# /mnt/flash/pciem [<new-options>] &
+
+      Note that in order to make sure the PCIe Monitor does not restart on
+      reboot / starts with a different config on reboot, the startup-config
+      has to be changed accordingly.
+
+      In order to uninstall PCIe Monitor, use:
+         (bash:root)# rm /mnt/flash/pciem
+         (bash:root)# pkill pciem
+
+   CONFIGURATION/DEBUGGING
+      In order to enable debugging output to stdout, use the '-d' command line 
+      option.
+      e.g.
+         (bash:root)# /mnt/flash/pciem -d ...
+      Note that can be quite verbouse, so it is recommended that it is used 
+      with caution, and only for debugging purposes.
+
+   COMPATIBILITY
+      Version 1.0 has been developed and tested against EOS-4.11.5. Please 
+      reach out to support@aristanetworks.com if you want to run this against
+      a different EOS release.
+"""
+
+import optparse
+
+import Ark
+import Cell
+import EntityManager
+import Logging
+import Tac
+
+# Register as PCIe Monitor with LogManager
+Ark.configureLogManager( 'pciem' )
+
+# Define log messages
+Logging.logD( id='HARDWARE_PCIE_ERROR',
+              severity=Logging.logError,
+              format='%s PCIe error detected at address %s (%s)',
+              explanation='A PCIe error was encountered.',
+              recommendedAction=Logging.CALL_SUPPORT_IF_PERSISTS )
+ 
+em = EntityManager.Sysdb( 'ar' )
+mg = em.mountGroup()
+pciDeviceStatusDir_ = \
+    mg.mount( "cell/%d/hardware/pciDeviceStatusDir" %
+              Cell.cellId(), "Hardware::PciDeviceStatusDir", "r" )            
+mg.close( blocking=True )
+
+debug = False
+def _trace( msg ):
+   if debug:
+      print msg
+
+def _addr( addr ):
+  return '%d:%d:%d.%d' % ( addr.domain, addr.busNumber, 
+                           addr.device, addr.function )
+
+class PciDeviceStatusReactor( Tac.Notifiee ):
+   notifierTypeName = 'Hardware::PciDeviceStatus'
+
+   def __init__( self, notifier ):
+      _trace( '%s: __init__' % notifier.name )
+      Tac.Notifiee.__init__( self, notifier )
+      self.pciDeviceStatus_ = notifier
+
+   @Tac.handler( 'correctableError' )
+   def handleCorrectableError_( self ):
+      _trace( 'handleCorrectableError_' )
+      Logging.log( HARDWARE_PCIE_ERROR,
+                   'Correctable',
+                   _addr( self.pciDeviceStatus_.addr ),
+                   self.pciDeviceStatus_.name )
+
+   @Tac.handler( 'uncorrectableNonFatalError' )
+   def handleUncorrectableNonFatalError_( self ):
+      _trace( 'handleUncorrectableNonFatalError_' )
+      Logging.log( HARDWARE_PCIE_ERROR,
+                   'Uncorrectable non-fatal', 
+                   _addr( self.pciDeviceStatus_.addr ),
+                   self.pciDeviceStatus_.name )
+
+   @Tac.handler( 'uncorrectableFatalError' )
+   def handleUncorrectableFatalError_( self ):
+      _trace( 'handleUncorrectableFatalError_' )
+      Logging.log( HARDWARE_PCIE_ERROR,
+                   'Uncorrectable fatal', 
+                   _addr( self.pciDeviceStatus_.addr ),
+                   self.pciDeviceStatus_.name )
+
+def main():
+   Tac.setproctitle( 'pciem' )
+
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options]'
+   op = optparse.OptionParser(usage=usage)
+   op.add_option( '-d', '--debug', dest='debug', action='store_true',
+                  help='print debug info' )
+
+   opts, _ = op.parse_args()
+ 
+   global debug
+   debug = opts.debug
+
+   _ = \
+       Tac.collectionChangeReactor( pciDeviceStatusDir_.pciDeviceStatus,
+                                    PciDeviceStatusReactor )
+   
+   # Run forever
+   Tac.runActivities()
+
+if __name__ == '__main__':
+   main()
