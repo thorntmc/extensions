@@ -65,7 +65,7 @@
       after reboot), add the following to the startup-config:
          event-handler syslogtrapd
             trigger on-boot
-            action bash /mnt/flash/syslogtrapd [<options>]
+            action bash sudo /usr/bin/daemonize /mnt/flash/syslogtrapd [<options>]
             asynchronous
       
       The SNMP Syslog Monitor process name is 'syslogtrapd', so
@@ -81,7 +81,7 @@
 
       In order to uninstall the SNMP Syslog Monitor, use:
          (bash:root)# rm /mnt/flash/syslogtrapd
-         (bash:root)# pgrep syslogtrapd | xargs kill    // if running
+         (bash:root)# pkill syslogtrapd             // if running
 
 
    CONFIGURATION 

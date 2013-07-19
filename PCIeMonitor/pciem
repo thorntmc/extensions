@@ -57,7 +57,7 @@
       the following to the startup-config:
          event-handler pciem
             trigger on-boot
-            action bash /mnt/flash/pciem [<options>]
+            action bash sudo /usr/bin/daemonize /mnt/flash/pciem [<options>]
             asynchronous
       
       PCIe Monitor process name is 'pciem', so standard Linux tools can be used

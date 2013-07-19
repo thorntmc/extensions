@@ -68,13 +68,13 @@
       the following to the startup-config:
          event-handler domm
             trigger on-boot
-            action bash /mnt/flash/domm [<options>]
+            action bash sudo /usr/bin/daemonize /mnt/flash/domm [<options>]
             asynchronous
       
       DOM Monitor process name is 'domm', so standard Linux tools can be used
       to stop and restart it with different options:
       e.g.
-         (bash:root)# pgrep domm | xargs kill
+         (bash:root)# pkill domm
          (bash:root)# /mnt/flash/domm [<new-options>] &
 
       Note that in order to make sure the DOM Monitor does not restart on
@@ -83,7 +83,7 @@
 
       In order to uninstall DOM Monitor, use:
          (bash:root)# rm /mnt/flash/domm
-         (bash:root)# pgrep domm | xargs kill              // if running
+         (bash:root)# pkill domm                    // if running
 
    CONFIGURATION/DEBUGGING
       The status of each XCVR is polled periodically (by default every 10s).
