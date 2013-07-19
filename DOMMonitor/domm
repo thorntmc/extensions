@@ -48,7 +48,8 @@
 
 """
    DESCRIPTION
-      The DOM Monitor script enables the end user to set-up appropriate alerts,      allowing proactive notifications when Tx/Rx DOM power readings vary from
+      The DOM Monitor script enables the end user to set-up appropriate alerts,
+      allowing proactive notifications when Tx/Rx DOM power readings vary from
       a fixed or a cumulative average baseline by a user-defined amount
       (specified in dBm).
 
