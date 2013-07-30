@@ -512,10 +512,6 @@ def _readPcap( inputFile, fcs, outputFile ):
    return pcapData
 
 def main():
-   if not vlanToDevId:
-      sys.exit( 'ERROR: Please configure the deviceId->VLAN mapping at the '
-                'top of the script!' )
-
    # Create help string and parse cmd line
    usage = 'usage: %prog [options] <input-filename>'
    op = optparse.OptionParser(usage=usage)
@@ -542,6 +538,10 @@ def main():
                   action='store', help='output file for UTC decode details' )
 
    opts, arguments = op.parse_args()
+
+   if not vlanToDevId:
+      sys.exit( 'ERROR: Please configure the deviceId->VLAN mapping at the '
+                'top of the script!' )
  
    # Check cmd line options
    if not arguments:
