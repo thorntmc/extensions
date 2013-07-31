@@ -103,7 +103,7 @@
       are required. As a result of that, any packets which are
       intercepted before any any keyframes are intercepted will not be
       decoded. For the rest, the script will buffer them until all the
-      requires keyframes are received.  Once that happened, utc is
+      requires keyframes are received.  Once that happened, UTC is
       decoded and the packet info is printed to stdout.
 '''
 
@@ -434,7 +434,7 @@ def _monitorIntf( intf ):
       pcapInfo = None
       f = open( tmpFilename )
       try:
-         # For some odd reason dpkt raises dpkt.dpkt.NeedData here sometimes            
+         # For some odd reason dpkt raises dpkt.dpkt.NeedData here sometimes
          # Ignore it for now.
          pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ][ ignorePackets: ]
       except Exception, e:
@@ -461,12 +461,12 @@ def _monitorIntf( intf ):
             deviceId = int( '0x' + binascii.hexlify( eth.ip.data[ 40 : 42 ] ), 0 )
 
             if deviceId not in keyframes:
-               sys.exit( 'ERROR: Keyframe from device %d seen in the capture, '
-                         'but device not configured in the VLAN->deviceId mapping! ' % 
+               sys.exit( 'ERROR: Keyframe from device %d seen in the capture, but '
+                         'device not configured in the VLAN->deviceId mapping! ' %
                          deviceId )
 
             _addKeyframe( deviceId, KeyframeData( asicTs, utc ) )
-            _decodePackets( devId )
+            _decodePackets( deviceId )
                
             _printTimestamp( Pcap( Timestamp( pcapTs=pcapTs, 
                                               pcapDelta=0,  
@@ -502,9 +502,9 @@ def _monitorIntf( intf ):
             hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
             devId = _devId( vlan )
 
-            packetBuffer[ devId ].append( PacketData( pcapTs, hwTicks, vlan,
-                                                      eth.ip.src if hasattr( eth, 'ip' )
-                                                                 else None ) ) 
+            packetBuffer[ devId ].append( 
+               PacketData( pcapTs, hwTicks, vlan,
+                           eth.ip.src if hasattr( eth, 'ip' ) else None ) ) 
 
       if not ignorePackets:
          ignorePackets = len( pcapInfo )
