@@ -97,14 +97,17 @@
 
       Multiple rollovers cannot be tracked and may go undetected.
 
-      Both the keyframe which arrived before a packet and the one
-      which arrived after a packet are needed in order to precisely
-      decode UTC. In some rare circumstances, two keyframes in advance
-      are required. As a result of that, any packets which are
-      intercepted before any keyframes are intercepted will not be
-      decoded. For the rest, the script will buffer them until all the
-      required keyframes are received.  Once that happened, UTC is
-      decoded and the packet info is printed to stdout.
+      Both the keyframe which arrived before a data packet and the one
+      which arrived after the data packet are needed in order to
+      precisely decode UTC. In some rare circumstances, two keyframes
+      in advance are required. As a result of that, any packets which
+      are intercepted before any keyframes will not be decoded. For
+      the rest, the script will buffer them until all the required
+      keyframes are received; only after that happened, UTC is decoded
+      and the packet info. is printed to stdout. Hence, if packets
+      coming in from multiple devices are decoded at the same time,
+      the order of the packets in the output might be different than
+      the order the packets actually arrived on the switch.
 '''
 
 
