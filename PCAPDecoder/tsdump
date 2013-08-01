@@ -101,9 +101,9 @@
       which arrived after a packet are needed in order to precisely
       decode UTC. In some rare circumstances, two keyframes in advance
       are required. As a result of that, any packets which are
-      intercepted before any any keyframes are intercepted will not be
+      intercepted before any keyframes are intercepted will not be
       decoded. For the rest, the script will buffer them until all the
-      requires keyframes are received.  Once that happened, UTC is
+      required keyframes are received.  Once that happened, UTC is
       decoded and the packet info is printed to stdout.
 '''
 
