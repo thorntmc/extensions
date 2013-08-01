@@ -134,10 +134,8 @@ vlanToDevId = {}
 #
 #    vlanToDevId[ * ] = 1
 #-------------------------------------------------------------
-vlanToDevId[ 46 ] = 10
-vlanToDevId[ 48 ] = 10
-vlanToDevId[ 50 ] = 10
-vlanToDevId[ 52 ] = 10
+
+
 
 import binascii
 import dpkt
