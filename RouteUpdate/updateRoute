@@ -27,27 +27,44 @@
 # OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 # IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# Port auto description
+# Update route
 #
 #    Version 1.0 8/14/2013
 #    Written by: 
 #       Mark Berly, Arista Networks
 #
 #    Revision history:
-#       1.0 - initially written using eAPI
+#       1.0 - initially written using Command API
 """
    DESCRIPTION
-      The route.py script is written to add or delete routes from the routing table
+      The updateRoute script can be used in order to add or delete
+      routes from the routing table.
 
-   INSTALLATION
-      In order to install portAuto:
-      - route.py can be run / installed on any device that runs python 2.7 or later
-      - change switchIP, username and password to the ones appropriate for your install
+   INSTALLATION 
+      updateRoute can be run / installed on any device that runs
+      Python 2.7 or later. In order to run updateRoute against a
+      switch, first enable Command API on the switch as follows:
+         
+         (config)# management api http-commands
+         (config)# protocol [http|https]
+         (config)# no shutdown
 
-      route.py can then be started using any of the following methods:
-          
-      1 - Execute directly from bash:
-         (bash:root)# route.py 192.168.1.0/24 10.10.10.1
+      updateRoute can then be executed directly from bash as shown in
+      the example below:
+
+      (bash:root)# updateRoute 1.1.1.0/24 ethernet1 192.168.3.34 test test
+
+      Command-line arguments:
+         - route with CIDR mask
+         - egress interface or next-hop address
+         - host name / ip address of switch to push/pull route
+         - username
+         - password
+         
+      Optional argumets:
+         --delete: removes route from routing table instead of adding it
+         --http: use HTTP instead of the default HTTPS
+         --enable-password: enable-mode password
          
    COMPATIBILITY
       Version 1.0 has been developed and tested against EOS-4.12.x and is using 
@@ -55,17 +72,17 @@
       EOS versions.
 
   LIMITATIONS
-      None known
+      None known.
 """
 
 import argparse
 from jsonrpclib import Server
 
-def connect( sip, username, password, secure=True ):
+def connect( sIpOrHostname, username, password, secure=True ):
    return Server( "%s://%s:%s@%s/command-api" 
-                  % ( "http" if not secure else "https", password, username, sip ) )    
+                  % ( "http" if not secure else "https", password, username, sIpOrHostname ) )    
    
-def updateRoute( switch, route, nextHop, delete=False, enablePass="" ):
+def updateRoute( switch, route, nextHop, delete, enablePass ):
    rc = switch.runCmds( 1, [ { "cmd": "enable", "input": enablePass },
                              "configure",
                              "%s ip route %s %s" 
@@ -75,21 +92,19 @@ def main():
    parser = argparse.ArgumentParser(description='Get route information')
    parser.add_argument( 'route', help='Route with CIDR mask (e.g 1.1.1.0/24)' )
    parser.add_argument( 'intf', help='Output interface or next hop' )
-   parser.add_argument( 'sip', help='switch IP address or name' )
+   parser.add_argument( 'sIpOrHostname', help='Switch IP address or Hostname' )
    parser.add_argument( 'username', help='Username' )
-   parser.add_argument( 'password', help='password' )
-   parser.add_argument( "--add", help="Add route",
-                       action="store_true" )
+   parser.add_argument( 'password', help='Password' )
    parser.add_argument( "--delete", help="Delete route",
                        action="store_true" )
    parser.add_argument( "--http", help="Use unsecure http connection (default is https)",
-                       action="store_true", default=True )         
-   parser.add_argument( "--enable", help="Enable password",
+                       action="store_false", default=True )      
+   parser.add_argument( "--enable-password", help="Enable-mode password",
                         default="" )                                   
    args = parser.parse_args()
    
-   switch = connect ( args.sip, args.username, args.password, args.http )
-   updateRoute ( switch, args.route, args.intf, args.delete, args.enable )
+   switch = connect ( args.sIpOrHostname, args.username, args.password, args.http )
+   updateRoute ( switch, args.route, args.intf, args.delete, args.enable_password )
 
 if __name__ == '__main__':
    main()
