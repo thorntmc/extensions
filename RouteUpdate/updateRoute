@@ -1,0 +1,109 @@
+#!/usr/bin/python
+#
+# Copyright (c) 2012-2013, Arista Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#  - Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#  - Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in the
+# documentation and/or other materials provided with the distribution.
+#  - Neither the name of Arista Networks nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ARISTA NETWORKS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# update route
+#
+#    Version 1.0 8/14/2013
+#    Written by: 
+#       Mark Berly, Arista Networks
+#
+#    Revision history:
+#       1.0 - initially written using eAPI
+"""
+   DESCRIPTION
+      The updateRoute script is written to add or delete routes from the routing table
+
+   INSTALLATION
+      In order to install updateRoute:
+      - updateRoute.py can be run / installed on any device that runs python 2.7 or later
+      - enable eAPI on the switch, in config mode:
+         
+         management api http-commands
+            no shutdown
+
+      updateRoute can then be started using the following methods:
+          
+      Execute directly from bash:
+         (bash:root)# updateRoute.py --add 1.1.1.0/24 ethernet1 192.168.3.34 test test
+         
+         route with CIDR mask
+         egress interface or next-hop address
+         host name / ip address of switch to push/pull route
+         username
+         password
+         
+         --add - adds route to routing table
+         --delete - removes route from routing table
+         --http - use http instead of the default https
+         
+         
+   COMPATIBILITY
+      Version 1.0 has been developed and tested against EOS-4.12.x and is using 
+      the eAPI interface so should maintain backward compatibility with future
+      EOS versions.
+
+  LIMITATIONS
+      None known
+"""
+
+import argparse
+from jsonrpclib import Server
+
+def connect( sIpOrHostname, username, password, secure=True ):
+   return Server( "%s://%s:%s@%s/command-api" 
+                  % ( "http" if not secure else "https", password, username, sIpOrHostname ) )    
+   
+def updateRoute( switch, route, nextHop, delete=False, enablePass="" ):
+   rc = switch.runCmds( 1, [ { "cmd": "enable", "input": enablePass },
+                             "configure",
+                             "%s ip route %s %s" 
+                             % ( "no " if delete else "", route, nextHop ) ] )
+
+def main():
+   parser = argparse.ArgumentParser(description='Get route information')
+   parser.add_argument( 'route', help='Route with CIDR mask (e.g 1.1.1.0/24)' )
+   parser.add_argument( 'intf', help='Output interface or next hop' )
+   parser.add_argument( 'sIpOrHostname', help='Switch IP address or Hostname' )
+   parser.add_argument( 'username', help='Username' )
+   parser.add_argument( 'password', help='Password' )
+   parser.add_argument( "--add", help="Add route",
+                       action="store_true" )
+   parser.add_argument( "--delete", help="Delete route",
+                       action="store_true" )
+   parser.add_argument( "--http", help="Use unsecure http connection (default is https)",
+                       action="store_false", default=True )         
+   parser.add_argument( "--enable", help="Enable password",
+                        default="" )                                   
+   args = parser.parse_args()
+   
+   switch = connect ( args.sIpOrHostname, args.username, args.password, args.http )
+   updateRoute ( switch, args.route, args.intf, args.delete, args.enable )
+
+if __name__ == '__main__':
+   main()
