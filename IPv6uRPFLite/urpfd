@@ -1,0 +1,465 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 2013, Arista Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#  - Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#  - Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in the
+# documentation and/or other materials provided with the distribution.
+#  - Neither the name of Arista Networks nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ARISTA NETWORKS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# IPv6 uRPF Lite
+#
+#    Version 1.0 22/8/2013
+#    Written by: 
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.0 - initial release
+
+'''
+   DESCRIPTION 
+      For each IPv6 address configured on an SVI, IPv6 uRPF Lite
+      automatically applies and IPv6 ACL rule on all L2 ports carrying
+      the corresponding VLAN. The resulting ingress ACLs permit only
+      the subnets configred in the SVIs.
+
+   INSTALLATION
+      In order to install IPv6 uRPF Lite, copy 'urpfd' to /mnt/flash.
+
+      IPv6 uRPF Lite can then be started using:
+         (bash:root)# /mnt/flash/urpfd [<options>] &
+
+      and you can use 'nohup' utility in order to make this persistent
+      over ssh:
+         (bash:root)# nohup /mnt/flash/urpfd [<options>] &      
+
+      See: 
+         (bash:root)# /mnt/flash/urpfd --help      
+      for details about the command-line options.
+
+      In order to run IPv6 uRPF Lite as a daemon (persistent after 
+      reboot), add the following to the startup-config:
+         event-handler urpfd
+            trigger on-boot
+            action bash sudo /usr/bin/daemonize /mnt/flash/urpfd [<options>] &
+            asynchronous
+      
+      The IPv6 uRPF Lite process name is 'urpfd', so standard Linux 
+      tools can be used to stop and restart it with different options:
+      e.g.
+         (bash:root)# pkill urpfd
+         (bash:root)# /mnt/flash/urpfd [<new-options>] &
+
+      Note that in order to make sure the IPv6 uRPF Lite does not
+      restart on reboot / starts with a different config on reboot,
+      the startup-config has to be changed accordingly.
+
+      In order to uninstall the IPv6 uRPF Lite, use:
+         (bash:root)# pkill urpfd
+         (bash:root)# rm /mnt/flash/urpfd
+
+   CONFIGURATION 
+      In order to enable debugging output to stdout, use the '-d'
+      command line option.
+
+      e.g.
+         (bash:root)# /mnt/flash/urpfd -d ...
+
+      Note that can be quite verbouse, so it is recommended that it is
+      used with caution, and only for debugging purposes.
+
+   COMPATIBILITY 
+      Version 1.0 has been developed and tested against EOS-4.12.X.
+      Please reach out to support@aristanetworks.com if you want to 
+      run this against a different EOS release.
+
+   LIMITATIONS
+      The script will only run successfuly on Arista boxes which 
+      support IPv6 ACLs.
+'''
+
+import optparse
+import re
+import sys
+
+import Arnet 
+import EntityManager
+import Tac
+
+Ip6RuleConfig = Tac.Type( 'Acl::Ip6RuleConfig' )
+Ip6Filter = Tac.Type( 'Acl::Ip6Filter' )
+
+# Maps L2 intfs to VLANs used for the corresponding ACL
+intfToVlans = {}
+
+# Maps VLANs (which could potentially be used for an ACL)
+# to L2 intfs
+vlanToIntfs = {}
+
+# Maps vlans IPv6 addrs.
+vlanToIp = {}
+
+# List of interfaces belonging to a LAGs
+lagMembers = []
+
+
+
+debug = None
+def trace( msg ):
+   if debug:
+      print msg
+
+count = 0
+def newUniqueId():
+   global count
+   count += 1
+   return Tac.Value( 'Acl::UniqueId', 0, 0, count )
+
+def aclName( intf ):
+   return 'URPFLite_%s' % intf
+
+def linkLocal( ipAddr ):
+   return re.match( '^fe80', ipAddr )
+
+def createAcl( intf, vlans ):
+   trace( 'createAcl( %s, %s )' % ( intf, str( vlans ) ) )
+   acl = aclName( intf )
+
+   ipv6Config = aclConfig.config[ 'ipv6' ]
+   config = ipv6Config.newAcl( acl, False, True )
+   uniqueId = newUniqueId()
+   subConfig = config.newSubConfig( uniqueId )   
+   config.currCfg = subConfig
+   seq = 10
+   for vlan in vlans:
+      for ipAddr in vlanToIp[ vlan ]:
+         ruleFilter = Ip6Filter( source=Arnet.Ip6AddrWithMask( ipAddr ) )
+         ruleConfig = Ip6RuleConfig( filter=ruleFilter,
+                                     action='permit', 
+                                     log=False )
+
+         uniqId = newUniqueId()
+         subConfig.ip6RuleById[ uniqId ] = ruleConfig
+         subConfig.ruleBySequence[ seq ] = uniqId
+         
+         seq += 10
+
+   trace( 'applyAcl( %s, %s )' % ( intf, acl ) )   
+   intfConfig = ipv6Config.intfs[ 'in' ] 
+   intfConfig.intf[ intf ] = acl
+
+   intfToVlans[ intf ] = vlans
+
+def deleteAcl( intf ):
+   trace( 'deleteAcl( %s )' % intf )
+   acl = aclName( intf )
+
+   ipv6Config = aclConfig.config[ 'ipv6' ] 
+   if acl in ipv6Config.acl:
+      del ipv6Config.acl[ acl ]
+
+   # Remove intf ACL config
+   intfConfig = aclConfig.config[ 'ipv6' ].intfs[ 'in' ]    
+   for intf, acc in intfConfig.intf.items():
+      if acl == acc:
+         del intfConfig.intf[ intf ]
+         return
+
+   if intf in intfToVlans:
+      del intfToVlans[ intf ]
+
+def deleteAllAcls():
+   trace( 'deleteAllAcls()' )
+   ipv6Config = aclConfig.config[ 'ipv6' ] 
+
+   for name in ipv6Config.acl.keys():
+      if re.match( '^URPFLite_.*', name ):
+         del ipv6Config.acl[ name ]
+
+   # Remove intf ACL configs
+   intfConfig = aclConfig.config[ 'ipv6' ].intfs[ 'in' ] 
+   for intf, acl in intfConfig.intf.items():
+      if re.match( '^URPFLite_.*', acl ):
+         del intfConfig.intf[ intf ]
+
+   Tac.runActivities( 0 )
+
+def sviTrunkVlans( switchIntfConfig ):
+   vlans = []
+   if not switchIntfConfig.trunkAllowedVlans:
+      # All vlans are allowed by default
+      vlans = range( 1, 4095 ) 
+
+   if not vlans:
+      for vlanRange in switchIntfConfig.trunkAllowedVlans.split( ',' ):
+         if '-' in vlanRange:
+            start, end = [ int( x ) for x in vlanRange.split( '-' ) ]
+            for vlan in range( start, end + 1 ):
+               if vlan in vlanToIp:
+                  vlans.append( vlan )
+         else:
+            vlan = int( vlanRange )
+            if vlan in vlanToIp:
+               vlans.append( vlan )            
+
+   trace( 'sviTrunkVlans( %s ): %s' % ( switchIntfConfig.intfId,
+                                        str( vlans ) ) )
+   return vlans
+
+
+
+class IntfStatusReactor( Tac.Notifiee ):
+   notifierTypeName = 'Ip6::IntfStatus'
+
+   def __init__( self, notifier ):
+      trace( 'IntfStatusReactor:__init__( %s )' % notifier.intfId )
+      Tac.Notifiee.__init__( self, notifier )
+      self.intfStatus = notifier
+      self.intfId = self.intfStatus.intfId
+
+      self.vlan = None
+      if re.match( '^Vlan\d+$', notifier.intfId ):
+         self.vlan = int( re.match( '^Vlan(\d+)$', 
+                                     notifier.intfId ).groups()[ 0 ] )
+
+         if self.intfStatus.addr:
+            vlanToIp[ self.vlan ] = set( [ x for x in self.intfStatus.addr 
+                                           if not linkLocal( str( x ) ) ] )
+
+   @Tac.handler( 'addr' )
+   def handleAddr( self, addr ):
+      trace( 'IntfStatusReactor:handleAddr( %s )' % addr )
+      if not self.vlan:
+         return
+
+      if addr and linkLocal( str( addr ) ):
+         return
+
+      if self.intfStatus.addr:
+         vlanToIp[ self.vlan ] = set( [ x for x in self.intfStatus.addr 
+                                        if not linkLocal( str( x ) ) ] )
+      else:
+         if self.vlan in vlanToIp:
+            del vlanToIp[ self.vlan ]
+
+      self.reapplyAcls()
+
+   def reapplyAcls( self ):
+      trace( 'IntfStatusReactor:reapplyAcls()' )
+
+      for reactor in switchIntfConfigReactors.reactors_.values():
+         reactor.updateVlanToIntfs()
+
+      if self.vlan in vlanToIntfs:
+         for intf in vlanToIntfs[ self.vlan ]:
+            switchIntfConfigReactors.reactors_[ intf ].maybeCreateAcl()
+
+   def close( self ):
+      trace( 'IntfStatusReactor:close( %s )' % self.intfId )
+      if self.vlan:
+         del vlanToIp[ self.vlan ]
+
+         if self.vlan in vlanToIntfs:
+            for intf in list( vlanToIntfs[ self.vlan ] ):
+               switchIntfConfigReactors.reactors_[ intf ].maybeCreateAcl()
+
+      Tac.Notifiee.close( self )
+
+
+
+class EthLagIntfStatusReactor( Tac.Notifiee ):
+   notifierTypeName = 'Interface::EthLagIntfStatus'
+
+   def __init__( self, notifier ):
+      trace( 'EthLagIntfStatusReactor:__init__()')
+      Tac.Notifiee.__init__( self, notifier )
+      self.ethLagIntfStatus = notifier
+
+      global lagMembers
+      lagMembers += self.ethLagIntfStatus.member.keys()
+      
+   def removeMember( self, member ):
+      trace( 'EthLagIntfStatusReactor:removeMember( %s )' % member )
+
+      lagMembers.remove( member )
+      switchIntfConfigReactors.reactors_[ member ].maybeCreateAcl()
+
+   @Tac.handler( 'member' )
+   def handleMember( self, member ):
+      trace( 'EthLagIntfStatusReactor:handleMember( %s )' % member )
+
+      global lagMembers
+      if member in self.ethLagIntfStatus.member:
+         lagMembers += [ member ]
+         if member in intfToVlans:
+            deleteAcl( member )
+      else:
+         self.removeMember( member )
+
+   def close( self ):
+      trace( 'EthLagIntfStatusReactor:close()' )
+      for member in self.ethLagIntfStatus.member:
+         self.removeMember( member )
+
+      Tac.Notifiee.close( self )
+
+
+
+class SwitchIntfConfigReactor( Tac.Notifiee ):
+   notifierTypeName = 'Bridging::Input::SwitchIntfConfig'
+
+   def __init__( self, notifier ):
+      trace( 'SwitchIntfConfigReactor:__init__( %s )' % notifier.intfId )
+      Tac.Notifiee.__init__( self, notifier )
+      self.switchIntfConfig = notifier
+      self.intfId = self.switchIntfConfig.intfId
+
+      self.maybeCreateAcl()
+
+   def updateVlanToIntfs( self ):
+      trace( 'SwitchIntfConfigReactor:updateVlanToIntfs( %s )' % self.intfId )
+
+      intf = self.intfId
+      for intfs  in vlanToIntfs.values():
+         if intf in intfs:
+            intfs.remove( intf )
+
+      if self.switchIntfConfig.switchportMode == 'access':
+         vlan = self.switchIntfConfig.accessVlan
+         if vlan not in vlanToIntfs:
+            vlanToIntfs[ vlan ] = set()            
+         vlanToIntfs[ vlan ].add( intf )
+      elif self.switchIntfConfig.switchportMode == 'trunk':
+         for vlan in sviTrunkVlans( self.switchIntfConfig ):
+            if vlan not in vlanToIntfs:
+               vlanToIntfs[ vlan ] = set()            
+            vlanToIntfs[ vlan ].add( intf )
+
+   def maybeCreateAcl( self ):
+      trace( 'SwitchIntfConfigReactor:maybeCreateAcl( %s )' %  self.intfId )
+
+      self.updateVlanToIntfs()
+      deleteAcl( self.intfId )
+
+      if( self.intfId in lagMembers or
+          not self.switchIntfConfig.enabled ):
+         return
+
+      if( self.switchIntfConfig.switchportMode == 'access' and 
+          self.switchIntfConfig.accessVlan in vlanToIp ):
+         createAcl( self.intfId, 
+                    [ self.switchIntfConfig.accessVlan ] )
+      elif self.switchIntfConfig.switchportMode == 'trunk':
+         trunkVlans = sviTrunkVlans( self.switchIntfConfig )
+         if trunkVlans:
+            createAcl( self.intfId, trunkVlans )
+
+   @Tac.handler( 'accessVlan' )
+   def handleAccessVlan( self ):
+      trace( 'SwitchIntfConfigReactor:handleAccessVlan( %s )' % 
+              self.switchIntfConfig.accessVlan )
+      self.maybeCreateAcl()
+
+   @Tac.handler( 'trunkAllowedVlans' )
+   def handleTrunkAllowedVlans( self ):
+      trace( 'SwitchIntfConfigReactor:handleTrunkAllowedVlans( %s )' % 
+              self.switchIntfConfig.trunkAllowedVlans )      
+      self.maybeCreateAcl()
+
+   @Tac.handler( 'switchportMode' )
+   def handleSwitchportMode( self ):
+      trace( 'SwitchIntfConfigReactor:handleSwitchportMode( %s )' % 
+              self.switchIntfConfig.switchportMode )
+      self.maybeCreateAcl()
+
+   @Tac.handler( 'enabled' )
+   def handleEnabled( self ):
+      trace( 'SwitchIntfConfigReactor:handleEnabled( %s )' % 
+              self.switchIntfConfig.enabled )
+      self.maybeCreateAcl()
+
+   def close( self ):
+      trace( 'SwitchIntfConfigReactor:close()' )
+      self.updateVlanToIntfs()
+      deleteAcl( self.intfId )
+      Tac.Notifiee.close( self )
+
+
+
+aclConfig = None
+switchIntfConfigReactors = None
+def main():
+   global aclConfig, debug, switchIntfConfigReactors
+
+   Tac.setproctitle( 'urpfd' )
+
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options]'
+   op = optparse.OptionParser( usage=usage )
+   op.add_option( '-d', '--debug', dest='debug', action='store_true',
+                  help='print debug info' )
+   opts, _ = op.parse_args()
+
+   debug = opts.debug
+
+   # Mount data from Sysdb                                                    
+   em = EntityManager.Sysdb( 'ar' )
+   mg = em.mountGroup()
+   ip6Status = mg.mount(  'ip6/status', 'Ip6::Status', 'r' )
+   switchIntfConfigDir = mg.mount( 'bridging/switchIntfConfig',
+                                   'Bridging::SwitchIntfConfigDir', 'r' )
+
+   lagIntfStatusDir = mg.mount( 'interface/status/eth/lag',
+                                 'Interface::EthLagIntfStatusDir', 'r' )
+   aclConfig = mg.mount( 'acl/config',
+                          'Acl::Config', 'w' )
+   aclStatus = mg.mount( 'acl/status/all',
+                         'Acl::Status', 'w' )
+   mg.close( blocking=True )
+
+   if not aclStatus.dpIp6AclSupported:
+      sys.exit( 'ERROR: This platform does not support IPv6 ACLs!')
+
+   deleteAllAcls()
+
+   # Populates global lagMembers, must start before
+   # SwitchIntfConfigReactors
+   ethLagIntfStatusReactors = \
+       Tac.collectionChangeReactor( lagIntfStatusDir.intfStatus,
+                                    EthLagIntfStatusReactor )
+
+   # Populates global vlanToIp, must start before
+   # SwitchIntfConfigReactor
+   intfStatusReactors = \
+       Tac.collectionChangeReactor( ip6Status.intf,
+                                    IntfStatusReactor )
+
+   # creates ACLs using global lagMembers and vlanToIp
+   switchIntfConfigReactors = \
+       Tac.collectionChangeReactor( switchIntfConfigDir.switchIntfConfig,
+                                    SwitchIntfConfigReactor )
+
+   Tac.runActivities()
+		
+if __name__ == '__main__':
+   main()
