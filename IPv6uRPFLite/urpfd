@@ -449,7 +449,7 @@ def main():
                                     EthLagIntfStatusReactor )
 
    # Populates global vlanToIp, must start before
-   # SwitchIntfConfigReactor
+   # SwitchIntfConfigReactors
    intfStatusReactors = \
        Tac.collectionChangeReactor( ip6Status.intf,
                                     IntfStatusReactor )
