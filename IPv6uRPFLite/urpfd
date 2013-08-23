@@ -94,7 +94,7 @@
       run this against a different EOS release.
 
    LIMITATIONS
-      The script will only run successfuly on Arista boxes which 
+      The script will only run succesfuly on Arista boxes which 
       support IPv6 ACLs.
 '''
 
