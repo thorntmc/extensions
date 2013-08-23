@@ -41,7 +41,7 @@
       For each IPv6 address configured on an SVI, IPv6 uRPF Lite
       automatically applies and IPv6 ACL rule on all L2 ports carrying
       the corresponding VLAN. The resulting ingress ACLs permit only
-      the subnets configred in the SVIs.
+      the subnets configured in the SVIs.
 
    INSTALLATION
       In order to install IPv6 uRPF Lite, copy 'urpfd' to /mnt/flash.
