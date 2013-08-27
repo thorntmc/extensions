@@ -181,7 +181,7 @@ packetBuffer = {}
 debug = None
 def _trace( msg ):
    if debug:      
-      print msg
+      print( msg )
 
 class VLANEthernet( dpkt.ethernet.Ethernet ):
    __hdr__ = (
@@ -224,7 +224,7 @@ def _printHeader():
               string.rjust( 'VLAN/DeviceId(VLANs)', 20 ),
               string.rjust( 'Note', 5 ) ]
 
-   print '%s' % ' '.join( header )
+   print( '%s' % ' '.join( header ) )
 
 def _printTimestamp( pcap ):
    note = ''
@@ -284,7 +284,7 @@ def _printTimestamp( pcap ):
            string.rjust( vlanOrDevIdString, 20 ),
            string.rjust( note, 5 ) ]
 
-   print ' '.join( row )
+   print( ' '.join( row ) )
 
 def _decodeValue( timestamp, keyframe ):
    diff = timestamp - keyframe.asicTs
@@ -438,7 +438,7 @@ def _monitorIntf( intf ):
          # For some odd reason dpkt raises dpkt.dpkt.NeedData here sometimes
          # Ignore it for now.
          pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ][ ignorePackets: ]
-      except Exception, e:
+      except Exception as e:
          _trace( 'Unexpected dpkt exception: %s' % str( e ) )
          f.close()
          continue
@@ -487,7 +487,7 @@ def _monitorIntf( intf ):
                # Ignore packets which don't belong to the configured VLANs
                try:
                   vlan = VLANEthernet( buf ).vlan
-               except Exception, e:
+               except Exception as e:
                   continue
 
                if vlan not in vlanToDevId:

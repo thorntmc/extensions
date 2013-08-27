@@ -155,7 +155,8 @@ vlanToDevId = {}
 #
 #    vlanToDevId[ '*' ] = 1
 #-------------------------------------------------------------
-
+vlanToDevId[ 10 ] = 10
+vlanToDevId[ 20 ] = 20
 
 import binascii
 import dpkt
@@ -229,12 +230,12 @@ def _printTimestamps( pcapData, showPcap, showUTC, showTicks, showDelta,
    if filename:
       try:
          f = open( filename, 'w' )
-      except IOError, e:
+      except IOError as e:
          sys.exit( '\nERROR: Unable to open file %s: %s\n' % ( filename, str( e ) ) )
 
       f.write( ' '.join( header ) + '\n' )
    else:
-      print ' '.join( header )
+      print( ' '.join( header ) )
 
    for pcap in pcapData:
       note = ''
@@ -297,7 +298,7 @@ def _printTimestamps( pcapData, showPcap, showUTC, showTicks, showDelta,
       if filename:
          f.write( ' '.join( row ) + '\n' )
       else:
-         print ' '.join( row )
+         print( ' '.join( row ) )
 
    if filename:
       f.close()
@@ -429,8 +430,8 @@ def _computeKeyframeData( pcapInfo ):
 
 def _readPcap( inputFile, fcs, outputFile ):
    try:
-      inFile = open( inputFile )
-   except IOError, e:
+      inFile = open( inputFile, 'rb' )
+   except IOError as e:
       sys.exit( '\nERROR: Unable to open file %s: %s\n' % ( inputFile, str( e ) ) )
 
    pcapData = []
@@ -440,15 +441,15 @@ def _readPcap( inputFile, fcs, outputFile ):
    if outputFile:
       try:
          outFile = open( outputFile, 'w' )
-      except IOError, e:
+      except IOError as e:
          sys.exit( '\nERROR: Unable to open file %s: %s\n' % 
                    ( outputFile, str( e ) ) )
       pcapWriter = dpkt.pcap.Writer( outFile )
 
-   print '\nReading keyframes...\n'
+   print( '\nReading keyframes...\n' )
    _computeKeyframeData( pcapInfo )
 
-   print '\nDecoding timestamps...\n'
+   print( '\nDecoding timestamps...\n' )
    # { deviceId: index in 'keyframe' (global) of last keyframe which was processed }
    keyframeIndex = {}
    for devId in set( vlanToDevId.values() ):
@@ -482,7 +483,7 @@ def _readPcap( inputFile, fcs, outputFile ):
             # Ignore packets which don't belong to the configured VLANs
             try:
                vlan = VLANEthernet( buf ).vlan
-            except Exception, e:
+            except Exception as e:
                continue
 
             if vlan not in vlanToDevId:
