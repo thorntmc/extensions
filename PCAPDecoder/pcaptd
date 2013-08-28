@@ -70,13 +70,6 @@
          (bash:root)# <path-to-script>/pcaptd [<options>] <input_pcap>
 
    CONFIGURATION 
-      By default, the decoder assumes that the input pcap
-      file contains timestamps which replace the FCS. If the timestamp
-      was added before the FCS, please use the '--fcs' command-line
-      option.  
-      e.g.  
-         (bash:root)# /mnt/flash/pcaptd --fcs <input_pcap>
-
       In order to show UTC decode details, use the '--utc-details'
       option. By default, stats are sent to stdout. In order to print
       them to a file, use the '--write-details-to-file' option (this
@@ -129,6 +122,12 @@
       timestamp in the packet will not be decoded. In some rare
       circumstances, two keyframes in advance are required for
       decoding UTC in a packet.
+
+      The decoder only works for timestamps which wer added before 
+      the FCS.
+
+         e.g.
+         (config-if-Et<>): mac timestamp before-fcs
 '''
 
 
@@ -428,7 +427,7 @@ def _computeKeyframeData( pcapInfo ):
          keyframes[ deviceId ][ kfIndex ] = [ asicTime & 0x7FFFFFFF, 
                                               utc ]
 
-def _readPcap( inputFile, fcs, outputFile ):
+def _readPcap( inputFile, outputFile ):
    try:
       inFile = open( inputFile, 'rb' )
    except IOError as e:
@@ -491,10 +490,7 @@ def _readPcap( inputFile, fcs, outputFile ):
                       'VLAN->deviceId mapping!' % vlan )
                continue
 
-         if fcs:
-            stamp = int( '0x' + binascii.hexlify( buf[ -8 : -4 ] ), 0 )
-         else:
-            stamp = int( '0x' + binascii.hexlify( buf[ -4 : ] ), 0 )
+         stamp = int( '0x' + binascii.hexlify( buf[ -4 : ] ), 0 )
       
          hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
          devId = _devId( vlan )
@@ -517,8 +513,6 @@ def main():
    # Create help string and parse cmd line
    usage = 'usage: %prog [options] <input-filename>'
    op = optparse.OptionParser(usage=usage)
-   op.add_option( '-f', '--fcs', dest='fcs', 
-                  action='store_true', help='pcap frames have valid fcs' )
    op.add_option( '-d', '--delta', dest='delta', 
                   action='store_true', help='show delta between consecutive '
                                             'packets in UTC decode details' )
@@ -555,7 +549,7 @@ def main():
                 'details is not enabled. Please use the "-u" option in '
                 'order to enable that.' )
 
-   pcapData = _readPcap( arguments[ 0 ], opts.fcs,
+   pcapData = _readPcap( arguments[ 0 ],
                          opts.pcapFilename )
    if opts.utcDetails:
       _printTimestamps( pcapData, opts.pcap, opts.utc, opts.ticks, 
