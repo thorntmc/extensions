@@ -333,7 +333,7 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
          if hwTicks > k2:
             if k1 < k2:
                # nextKf was timestamped first, but packet egressed first
-               # out of the asi, because of congestion
+               # out of the asic, because of congestion
                if nextKf:
                   utc = _decodeValue( hwTicks, nextKf )
             else:
