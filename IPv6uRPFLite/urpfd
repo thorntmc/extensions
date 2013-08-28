@@ -41,7 +41,7 @@
       For each IPv6 address configured on an SVI, IPv6 uRPF Lite
       automatically applies and IPv6 ACL rule on all L2 ports carrying
       the corresponding VLAN. The resulting ingress ACLs permit only
-      the subnets configured in the SVIs.
+      the subnets configred in the SVIs.
 
    INSTALLATION
       In order to install IPv6 uRPF Lite, copy 'urpfd' to /mnt/flash.
@@ -62,6 +62,7 @@
          event-handler urpfd
             trigger on-boot
             action bash sudo /usr/bin/daemonize /mnt/flash/urpfd [<options>] &
+            delay 180
             asynchronous
       
       The IPv6 uRPF Lite process name is 'urpfd', so standard Linux 
@@ -96,6 +97,8 @@
    LIMITATIONS
       The script will only run succesfuly on Arista boxes which 
       support IPv6 ACLs.
+
+      IPv6 L2 ACLs should not be used in conjunction with urpfd.
 '''
 
 import optparse
@@ -152,17 +155,18 @@ def createAcl( intf, vlans ):
    config.currCfg = subConfig
    seq = 10
    for vlan in vlans:
-      for ipAddr in vlanToIp[ vlan ]:
-         ruleFilter = Ip6Filter( source=Arnet.Ip6AddrWithMask( ipAddr ) )
-         ruleConfig = Ip6RuleConfig( filter=ruleFilter,
-                                     action='permit', 
-                                     log=False )
+      if vlan in vlanToIp:
+         for ipAddr in vlanToIp[ vlan ]:
+            ruleFilter = Ip6Filter( source=Arnet.Ip6AddrWithMask( ipAddr ) )
+            ruleConfig = Ip6RuleConfig( filter=ruleFilter,
+                                        action='permit', 
+                                        log=False )
 
-         uniqId = newUniqueId()
-         subConfig.ip6RuleById[ uniqId ] = ruleConfig
-         subConfig.ruleBySequence[ seq ] = uniqId
+            uniqId = newUniqueId()
+            subConfig.ip6RuleById[ uniqId ] = ruleConfig
+            subConfig.ruleBySequence[ seq ] = uniqId
          
-         seq += 10
+            seq += 10
 
    trace( 'applyAcl( %s, %s )' % ( intf, acl ) )   
    intfConfig = ipv6Config.intfs[ 'in' ] 
@@ -206,11 +210,7 @@ def deleteAllAcls():
 
 def sviTrunkVlans( switchIntfConfig ):
    vlans = []
-   if not switchIntfConfig.trunkAllowedVlans:
-      # All vlans are allowed by default
-      vlans = range( 1, 4095 ) 
-
-   if not vlans:
+   if switchIntfConfig.trunkAllowedVlans:
       for vlanRange in switchIntfConfig.trunkAllowedVlans.split( ',' ):
          if '-' in vlanRange:
             start, end = [ int( x ) for x in vlanRange.split( '-' ) ]
@@ -221,18 +221,17 @@ def sviTrunkVlans( switchIntfConfig ):
             vlan = int( vlanRange )
             if vlan in vlanToIp:
                vlans.append( vlan )            
-
    trace( 'sviTrunkVlans( %s ): %s' % ( switchIntfConfig.intfId,
-                                        str( vlans ) ) )
+                                        str( len( vlans ) ) ) )
    return vlans
 
 
 
-class IntfStatusReactor( Tac.Notifiee ):
+class Ip6StatusReactor( Tac.Notifiee ):
    notifierTypeName = 'Ip6::IntfStatus'
 
    def __init__( self, notifier ):
-      trace( 'IntfStatusReactor:__init__( %s )' % notifier.intfId )
+      trace( 'Ip6StatusReactor:__init__( %s )' % notifier.intfId )
       Tac.Notifiee.__init__( self, notifier )
       self.intfStatus = notifier
       self.intfId = self.intfStatus.intfId
@@ -248,7 +247,7 @@ class IntfStatusReactor( Tac.Notifiee ):
 
    @Tac.handler( 'addr' )
    def handleAddr( self, addr ):
-      trace( 'IntfStatusReactor:handleAddr( %s )' % addr )
+      trace( 'Ip6StatusReactor:handleAddr( %s )' % addr )
       if not self.vlan:
          return
 
@@ -265,7 +264,7 @@ class IntfStatusReactor( Tac.Notifiee ):
       self.reapplyAcls()
 
    def reapplyAcls( self ):
-      trace( 'IntfStatusReactor:reapplyAcls()' )
+      trace( 'Ip6StatusReactor:reapplyAcls()' )
 
       for reactor in switchIntfConfigReactors.reactors_.values():
          reactor.updateVlanToIntfs()
@@ -275,7 +274,7 @@ class IntfStatusReactor( Tac.Notifiee ):
             switchIntfConfigReactors.reactors_[ intf ].maybeCreateAcl()
 
    def close( self ):
-      trace( 'IntfStatusReactor:close( %s )' % self.intfId )
+      trace( 'Ip6StatusReactor:close( %s )' % self.intfId )
       if self.vlan:
          del vlanToIp[ self.vlan ]
 
@@ -283,6 +282,44 @@ class IntfStatusReactor( Tac.Notifiee ):
             for intf in list( vlanToIntfs[ self.vlan ] ):
                switchIntfConfigReactors.reactors_[ intf ].maybeCreateAcl()
 
+      Tac.Notifiee.close( self )
+
+
+
+class IntfStatusReactor( Tac.Notifiee ):
+   notifierTypeName = 'Interface::EthPhyIntfStatus'
+
+   def __init__( self, notifier ):
+      trace( 'IntfStatusReactor:__init__()')
+      Tac.Notifiee.__init__( self, notifier )
+      self.ethPhyIntfStatus = notifier
+      self.intfId = self.ethPhyIntfStatus.intfId
+
+   def statusOk( self ):
+      return ( self.ethPhyIntfStatus.operStatus == 'intfOperUp' and
+               self.ethPhyIntfStatus.rawLinkStatus in [ 'linkUp',
+                                                        # Port-Channels
+                                                        'linkUnknown' ] )
+
+   def handleUpdate( self ):
+      if( not switchIntfConfigReactors or 
+          self.intfId not in switchIntfConfigReactors.reactors_ ):
+         return
+      switchIntfConfigReactors.reactors_[ self.intfId ].maybeCreateAcl()
+
+   @Tac.handler( 'operStatus' )
+   def handleOperStatus( self ):
+      trace( 'IntfStatusReactor:handleOperStatus( %s )' % self.intfId )
+      self.handleUpdate()
+
+   @Tac.handler( 'rawLinkStatus' )
+   def handleRawLinkStatus( self ):
+      trace( 'IntfStatusReactor:handleMember( %s )' % self.intfId )
+      self.handleUpdate()
+
+   def close( self ):
+      trace( 'IntfStatusReactor:close()' )
+      self.handleUpdate()
       Tac.Notifiee.close( self )
 
 
@@ -300,7 +337,6 @@ class EthLagIntfStatusReactor( Tac.Notifiee ):
       
    def removeMember( self, member ):
       trace( 'EthLagIntfStatusReactor:removeMember( %s )' % member )
-
       lagMembers.remove( member )
       switchIntfConfigReactors.reactors_[ member ].maybeCreateAcl()
 
@@ -361,8 +397,20 @@ class SwitchIntfConfigReactor( Tac.Notifiee ):
       self.updateVlanToIntfs()
       deleteAcl( self.intfId )
 
-      if( self.intfId in lagMembers or
-          not self.switchIntfConfig.enabled ):
+      if self.intfId in lagMembers:
+         trace( 'ACL not created: intf is lag member' )
+         return
+
+      if not self.switchIntfConfig.enabled:
+         trace( 'ACL not created: intf is routed port' )
+         return
+
+      if self.intfId not in intfStatusReactors.reactors_:
+         trace( 'ACL not created: intfStatusReactor missing' )
+         return          
+
+      if not intfStatusReactors.reactors_[ self.intfId ].statusOk():
+         trace( 'ACL not created: interface is down' )
          return
 
       if( self.switchIntfConfig.switchportMode == 'access' and 
@@ -408,8 +456,10 @@ class SwitchIntfConfigReactor( Tac.Notifiee ):
 
 aclConfig = None
 switchIntfConfigReactors = None
+intfStatusReactors = None
 def main():
-   global aclConfig, debug, switchIntfConfigReactors
+   global aclConfig, debug
+   global intfStatusReactors, switchIntfConfigReactors
 
    Tac.setproctitle( 'urpfd' )
 
@@ -428,19 +478,27 @@ def main():
    ip6Status = mg.mount(  'ip6/status', 'Ip6::Status', 'r' )
    switchIntfConfigDir = mg.mount( 'bridging/switchIntfConfig',
                                    'Bridging::SwitchIntfConfigDir', 'r' )
-
    lagIntfStatusDir = mg.mount( 'interface/status/eth/lag',
                                  'Interface::EthLagIntfStatusDir', 'r' )
    aclConfig = mg.mount( 'acl/config',
                           'Acl::Config', 'w' )
    aclStatus = mg.mount( 'acl/status/all',
                          'Acl::Status', 'w' )
+   allIntfStatusDir = mg.mount( 'interface/status/all',
+                                'Interface::AllIntfStatusDir', 'r' )
+
+
    mg.close( blocking=True )
 
    if not aclStatus.dpIp6AclSupported:
       sys.exit( 'ERROR: This platform does not support IPv6 ACLs!')
 
    deleteAllAcls()
+
+   
+   intfStatusReactors = \
+       Tac.collectionChangeReactor( allIntfStatusDir.intfStatus,
+                                    IntfStatusReactor )
 
    # Populates global lagMembers, must start before
    # SwitchIntfConfigReactors
@@ -449,10 +507,10 @@ def main():
                                     EthLagIntfStatusReactor )
 
    # Populates global vlanToIp, must start before
-   # SwitchIntfConfigReactors
-   intfStatusReactors = \
+   # SwitchIntfConfigReactor
+   ip6StatusReactors = \
        Tac.collectionChangeReactor( ip6Status.intf,
-                                    IntfStatusReactor )
+                                    Ip6StatusReactor )
 
    # creates ACLs using global lagMembers and vlanToIp
    switchIntfConfigReactors = \
