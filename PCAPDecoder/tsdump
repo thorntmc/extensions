@@ -132,7 +132,7 @@ vlanToDevId = {}
 # e.g.
 #    Untagged traffic timestamped through device 1
 #
-#    vlanToDevId[ * ] = 1
+#    vlanToDevId[ '*' ] = 1
 #-------------------------------------------------------------
 
 
