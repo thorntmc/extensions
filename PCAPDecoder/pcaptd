@@ -354,7 +354,7 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
             else:
                assert k1 > k2
                if hwTicks - k2 > k1 - hwTicks:
-                  # nextKf rollover, packet timestamped within startup offser of kf
+                  # nextKf rollover, packet timestamped within startup offset of kf
                   if prevKf:
                      utc = _decodeValue( hwTicks, prevKf )            
                else:
@@ -363,7 +363,7 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
                   utc = _decodeValue( hwTicks, nextKf )
          elif hwTicks < k2:
             if k1 < k2:
-               # packet timestamped within startup offser of kf
+               # packet timestamped within startup offset of kf
                if prevKf:
                   utc = _decodeValue( hwTicks, prevKf )
             else:
