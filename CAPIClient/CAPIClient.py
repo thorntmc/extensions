@@ -230,13 +230,14 @@ class VlanClient( object ):
 class CommandApiClient( object ):
 
    def __init__( self, mgmtIpOrHostname, username, password, 
-                 enablePassword='' ):
+                 enablePassword='', https=False ):
       '''
       Keyword arguments:
          mgmtIpOrHostname -- IP address or hostname of Command API server
          username         -- username
          password         -- password corresponding to username
          enablePassword   -- enable mode password
+         https            -- use HTTPS connection to server
 
       Raises ConnectionError if connection to Command API server cannot
       be established:
@@ -248,8 +249,10 @@ class CommandApiClient( object ):
       self.username = username
       self.password = password
       self.enablePassword = enablePassword
-      url = 'http://%s:%s@%s/command-api' % ( username, password,
-                                               mgmtIpOrHostname )
+
+      protocol = 'https' is https else http
+      url = '%s://%s:%s@%s/command-api' % ( protocol, username, password,
+                                            mgmtIpOrHostname )
       self.client = jsonrpclib.Server( url  )
 
       try:
@@ -257,7 +260,7 @@ class CommandApiClient( object ):
       except socket.error:
          raise ConnectionError( url )
 
-   def runEnableCmds( self, cmds, format='json' ):
+   def runEnableCmds( self, cmds, textFormat=False ):
       '''
       Runs commands in enable mode and returns a list of Command API
       results.
@@ -267,6 +270,7 @@ class CommandApiClient( object ):
 
       Keyword arguments:
          cmds -- list of enable mode commands
+         text -- return results in 'text' format
 
       Raises ProtocolError if any of the input commands is invalid.
 
@@ -274,6 +278,8 @@ class CommandApiClient( object ):
          *** ProtocolError: (1002, u"CLI command 4 of 4 'showz version' failed: 
          invalid command")
       '''
+
+      format = 'text' if textFormat else 'json'
       return self.client.runCmds( 1, [ { 'cmd': 'enable', 
                                          'input': self.enablePassword } ] +
                                   cmds, format )[ 1: ]
