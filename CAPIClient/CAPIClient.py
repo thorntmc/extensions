@@ -280,9 +280,13 @@ class CommandApiClient( object ):
       '''
 
       format = 'text' if textFormat else 'json'
-      return self.client.runCmds( 1, [ { 'cmd': 'enable', 
-                                         'input': self.enablePassword } ] +
-                                  cmds, format )[ 1: ]
+      result = self.client.runCmds( 1, [ { 'cmd': 'enable', 
+                                           'input': self.enablePassword } ] +
+                                    cmds, format )[ 1: ]
+      if textFormat:
+         return [ x.values()[ 0 ] for x in result ]
+      else:
+         return result
 
    def runConfigCmds( self, cmds ):
       '''
