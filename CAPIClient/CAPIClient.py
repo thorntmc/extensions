@@ -72,6 +72,10 @@
 
    LIMITATIONS
       Command API is only available starting EOS-4.12.0.
+
+      In EOS-4.12.0-3, InterfaceClient.runConfigCmds( ...  ) raises
+      ProtocolError for interface ranges. This bug is fixed in later
+      releases.
 '''
 
 import jsonrpclib
@@ -109,33 +113,31 @@ class InterfaceClient( object ):
    status of a network interface.
    '''
 
-   def __init__( self, name, client ):
+   def __init__( self, intfOrRange, client ):
       '''
       Keyword arguments:
-         name   -- interface name
-         client -- CommandApiClient object 
+         intfOrRange -- interface name or range
+         client      -- CommandApiClient object 
 
-      Raises InvalidInterfaceError if the name of the interface 
-      is invalid.
+      Raises InvalidInterfaceError if intfOrRange is invalid.
 
          > InterfaceClient( 'Etthernet1', client )
          *** InvalidInterfaceError: Etthernet1
       '''
-      self.name = name.strip()
+      self.intfOrRange = intfOrRange.strip()
       self.client = client
 
-      # Check interface name
       try:
-         self.client.runIntfConfigCmds( self.name, [] )
+         self.client.runIntfConfigCmds( self.intfOrRange, [] )
       except jsonrpclib.jsonrpc.ProtocolError:
-         raise InvalidInterfaceError( self.name )
+         raise InvalidInterfaceError( self.intfOrRange )
       
    def runConfigCmds( self, cmds ):
       '''
       Runs commands in interface-config mode and returns a list of
       Command API results.
 
-         > et1.runConfigCmds( [ 'description 1', 'description 2' ] )
+         > et1to5.runConfigCmds( [ 'description 1', 'description 2' ] )
          [{}, {}]
 
       Keyword arguments:
@@ -147,43 +149,50 @@ class InterfaceClient( object ):
          *** ProtocolError: (1002, u"CLI command 4 of 4 'descriptionn 1' failed: 
          invalid command")
       '''
-      return self.client.runIntfConfigCmds( self.name, cmds )
+      return self.client.runIntfConfigCmds( self.intfOrRange, cmds )
 
    def status( self ):
       '''
-      Returns the Command API status of the interface.
+      Returns the Command API status of the interface(s). If this
+      object represents a single interface, then the status of that
+      interface is returned. Otherwise, a dict which maps each
+      interface in the range to its own status is returned 
+      ( { <interface> : <status> } ).
       '''
       result = self.client.runEnableCmds( [ 'show interfaces %s status' % 
-                                            self.name ] )
-      return result[ 0 ][ 'interfaceStatuses' ].values()
+                                            self.intfOrRange ] )
+      intfs = result[ 0 ][ 'interfaceStatuses' ]
+      if len( intfs ) == 1:
+         return intfs.values()[ 0 ]
+      else:
+         return intfs
 
 class VlanClient( object ):
    '''
    A Command API vlan client.
 
    This object can be used in order to configure and retrieve the
-   status of a vlan.
+   status of a vlan or a range of vlans.
    '''
 
-   def __init__( self, vlan, client ):
+   def __init__( self, vlanOrRange, client ):
       '''
       Keyword arguments:
-         vlan   -- vlan number
-         client -- CommandApiClient object 
+         vlanOrRange -- vlan number or range
+         client      -- CommandApiClient object 
 
-      Raises InvalidVlanError if the vlan is outside the valid range.
+      Raises InvalidVlanError if vlanOrRange is invalid.
 
          > VlanClient( 5000, conn )
          *** InvalidVlanError: 5000
       '''
-      self.vlan = vlan
+      self.vlanOrRange = vlanOrRange
       self.client = client
 
-      # Check vlan
       try:
-         self.client.runVlanConfigCmds( self.vlan, [] )
+         self.client.runVlanConfigCmds( self.vlanOrRange, [] )
       except jsonrpclib.jsonrpc.ProtocolError:
-         raise InvalidVlanError( self.vlan )
+         raise InvalidVlanError( self.vlanOrRange )
       
    def runConfigCmds( self, cmds ):
       '''
@@ -198,18 +207,25 @@ class VlanClient( object ):
 
       Raises ProtocolError if any of the input commands is invalid.
 
-         > vlan10.runConfigCmds( [ 'nname 1' ] )
+         > vlan1to3.runConfigCmds( [ 'nname 1' ] )
          *** ProtocolError: (1002, u"CLI command 4 of 4 'nname 1' failed: 
          invalid command")
       '''
-      return self.client.runVlanConfigCmds( self.vlan, cmds )
+      return self.client.runVlanConfigCmds( self.vlanOrRange, cmds )
 
    def status( self ):
       '''
-      Returns the Command API status of the vlan.
+      Returns the Command API status of the vlan(s). If this object
+      represents a single vlan, then the status of that vlan is
+      returned. Otherwise, a dict which maps each vlan in the range to
+      its own status is returned ( { <vlan> : <status> } ).
       '''
-      result = self.client.runEnableCmds( [ 'show vlan %s' % self.vlan ] ) 
-      return result[ 0 ][ 'vlans' ][ str( self.vlan ) ]
+      result = self.client.runEnableCmds( [ 'show vlan %s' % self.vlanOrRange ] ) 
+      vlans = result[ 0 ][ 'vlans' ]
+      if len( vlans ) == 1:
+         return vlans.values()[ 0 ]
+      else:
+         return vlans
 
 class CommandApiClient( object ):
 
@@ -226,13 +242,13 @@ class CommandApiClient( object ):
       be established:
 
          > CommandApiClient( '1.3.4.5', 'usr', 'pass')
-         *** ConnectionError: https://usr:pass@1.2.3.4/command-api
+         *** ConnectionError: http://usr:pass@1.2.3.4/command-api
       '''
       self.host = mgmtIpOrHostname
       self.username = username
       self.password = password
       self.enablePassword = enablePassword
-      url = 'https://%s:%s@%s/command-api' % ( username, password,
+      url = 'http://%s:%s@%s/command-api' % ( username, password,
                                                mgmtIpOrHostname )
       self.client = jsonrpclib.Server( url  )
 
@@ -281,7 +297,7 @@ class CommandApiClient( object ):
       '''
       return self.runEnableCmds( [ 'configure' ] + cmds )[ 1: ]
    
-   def runIntfConfigCmds( self, intf, cmds ):
+   def runIntfConfigCmds( self, intfOrRange, cmds ):
       '''
       Runs commands in interface-config mode and returns a list of
       Command API results.
@@ -291,8 +307,8 @@ class CommandApiClient( object ):
          [{}, {}]
 
       Keyword arguments:
-         intf -- interface name
-         cmds -- list of interface-config mode commands
+         intfOrRange -- interface name or range
+         cmds        -- list of interface-config mode commands
 
       Raises ProtocolError if any of the input commands is not valid.
 
@@ -300,9 +316,9 @@ class CommandApiClient( object ):
          *** ProtocolError: (1002, u"CLI command 4 of 4 'descriptionn 1' failed:
          invalid command")
       '''
-      return self.runConfigCmds( [ 'interface %s' % intf ] + cmds )[ 1: ]
+      return self.runConfigCmds( [ 'interface %s' % intfOrRange ] + cmds )[ 1: ]
    
-   def runVlanConfigCmds( self, vlan, cmds ):
+   def runVlanConfigCmds( self, vlanOrRange, cmds ):
       '''
       Runs configuration commands in vlan-config mode and returns a
       list of Command API results.
@@ -311,8 +327,8 @@ class CommandApiClient( object ):
          [{}, {}]
 
       Keyword arguments:
-         vlan -- vlan number
-         cmds -- list of vlan-config mode commands
+         vlanOrRange -- vlan number or range
+         cmds        -- list of vlan-config mode commands
 
       Raises ProtocolError if any of the input commands is invalid.
 
@@ -320,7 +336,7 @@ class CommandApiClient( object ):
          *** ProtocolError: (1002, u"CLI command 4 of 4 'nname 1' failed: 
          invalid command")
       '''
-      return self.runConfigCmds( [ 'vlan %s' % vlan ] + cmds )[ 1: ]
+      return self.runConfigCmds( [ 'vlan %s' % vlanOrRange ] + cmds )[ 1: ]
    
    def runMlagConfigCmds( self, cmds ):
       '''
@@ -341,20 +357,22 @@ class CommandApiClient( object ):
       '''
       return self.runConfigCmds( [ 'mlag configuration' ] + cmds )[ 1: ]
 
-   def interface( self, name ):
+   def interface( self, intfOrRange ):
       '''
-      Returns an InterfaceClient object corresponding to the interface name.
+      Returns an InterfaceClient object corresponding to the interface
+      name or range.
 
       Keyword arguments:
-         name -- interface name
+         intfOrRange -- interface name or range
       '''
-      return InterfaceClient( name, self )
+      return InterfaceClient( intfOrRange, self )
 
-   def vlan( self, vlan ):
+   def vlan( self, vlanOrRange ):
       '''
-      Returns a VlanClient object corresponding to the vlan number.
+      Returns a VlanClient object corresponding to the vlan number or
+      range.
 
       Keyword arguments:
-         vlan -- vlan number
+         vlanOrRange -- vlan number or range
       '''
-      return VlanClient( vlan, self )
+      return VlanClient( vlanOrRange, self )
