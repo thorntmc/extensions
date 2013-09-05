@@ -250,7 +250,7 @@ class CommandApiClient( object ):
       self.password = password
       self.enablePassword = enablePassword
 
-      protocol = 'https' if https else http
+      protocol = 'https' if https else 'http'
       url = '%s://%s:%s@%s/command-api' % ( protocol, username, password,
                                             mgmtIpOrHostname )
       self.client = jsonrpclib.Server( url  )
