@@ -276,7 +276,7 @@ class CommandApiClient( object ):
       '''
       return self.client.runCmds( 1, [ { 'cmd': 'enable', 
                                          'input': self.enablePassword } ] +
-                                  cmds, format=format )[ 1: ]
+                                  cmds, format )[ 1: ]
 
    def runConfigCmds( self, cmds ):
       '''
