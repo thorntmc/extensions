@@ -257,7 +257,7 @@ class CommandApiClient( object ):
       except socket.error:
          raise ConnectionError( url )
 
-   def runEnableCmds( self, cmds ):
+   def runEnableCmds( self, cmds, format='json' ):
       '''
       Runs commands in enable mode and returns a list of Command API
       results.
@@ -276,7 +276,7 @@ class CommandApiClient( object ):
       '''
       return self.client.runCmds( 1, [ { 'cmd': 'enable', 
                                          'input': self.enablePassword } ] +
-                                  cmds )[ 1: ]
+                                  cmds, format=format )[ 1: ]
 
    def runConfigCmds( self, cmds ):
       '''
