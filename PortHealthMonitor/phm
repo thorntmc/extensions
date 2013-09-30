@@ -155,7 +155,7 @@ def _sendAlarm( intf, errType, base, newValue ):
    else:
       assert False, 'Only FCS/symbol errors are supported'
 
-   subject = 'WARNING - Arista Port Healt Monitor: ' \
+   subject = 'WARNING - Arista Port Health Monitor: ' \
              'port errors detected on %s-%s' % \
              ( netConfig.hostname, intf )
    
