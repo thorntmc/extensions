@@ -1,0 +1,272 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 2013, Arista Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#  - Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#  - Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in the
+# documentation and/or other materials provided with the distribution.
+#  - Neither the name of Arista Networks nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ARISTA NETWORKS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Port Health Monitor
+#
+#    Version 1.0 1/10/2013
+#    Written by: 
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.0 - initial release
+
+'''
+   DESCRIPTION
+      The Port Health Monitor script sends email notifications
+      whenever the FCS/symbol errors counters on an interface exceed a
+      pre-configured level.
+
+   INSTALLATION
+      In order to install Port Health Monitor, copy 'phm' to
+      /mnt/flash.
+
+      Port Health Monitor can then be started using:
+         (bash:root)# /mnt/flash/phm [<options>] <email> &
+      and you can use 'nohup' utility in order to make this persistent
+      over ssh:
+         (bash:root)# nohup /mnt/flash/phm [<options>] <email> &      
+
+      See: 
+         (bash:root)# /mnt/flash/phm --help
+      for details about the command-line options.
+
+      In order to run Port Health Monitor as a daemon (persistent
+      after reboot), add the following to the startup-config:
+
+         event-handler phm
+            trigger on-boot
+            action bash sudo /usr/bin/daemonize /mnt/flash/phm [<options>] <email> &
+            asynchronous
+      
+      Port Health Monitor process name is 'phm', so standard Linux
+      tools can be used to stop and restart it with different options:
+
+      e.g.
+         (bash:root)# pkill phm
+         (bash:root)# /mnt/flash/phm [<new-options>] <email> &
+
+      Note that in order to make sure the Port Health Monitor does not
+      restart on reboot / starts with a different config on reboot,
+      the startup-config has to be changed accordingly.
+
+      In order to uninstall Port Health Monitor, use:
+         (bash:root)# rm /mnt/flash/phm
+         (bash:root)# pkill phm                    // if running
+
+   CONFIGURATION/DEBUGGING
+      The default tolerance level for the FCS/symbol errors is 100. If
+      you want to change that, please use the '--fcs--tolerance'/'--symbol-tolerance'
+      ('-f'/'-s') command-line options.
+      e.g.
+         (bash:root)# nohup /mnt/flash/phm -f 500 -s 1000 <email> &
+
+      The base values for the interface error counters are the values
+      of the counters when the script is started. Each value is reset
+      after each corresponding email notification or if the counters
+      are cleared.
+
+      In order to enable debugging output to stdout, use the '-d' command line
+      option.
+      e.g.
+         (bash:root)# /mnt/flash/phm -d <email> &
+      Note that the output can be quite verbouse so it is recommended
+      that this option is used with caution, and only for debugging
+      purposes.
+
+   COMPATIBILITY
+      Version 1.0 has been developed and tested against
+      EOS-4.9.7. Please reach out to support@aristanetworks.com if you
+      want to run this against a different EOS release.
+
+  LIMITATIONS
+      None known.
+'''
+
+
+
+import optparse
+import smtplib
+import sys
+
+import EntityManager
+import Tac
+
+from email.mime.text import MIMEText
+
+
+
+# Counter base values
+errors = {}
+errors[ 'fcs' ] = {}
+errors[ 'symbol' ] = {}
+
+# Mount data from Sysdb
+em = EntityManager.Sysdb( 'ar' )
+mg = em.mountGroup()
+allCounter = mg.mount( 'interface/counter/eth/phy',            
+                       'Interface::AllEthIntfCounterPtrDir', 'r' )    
+netConfig = mg.mount( 'sys/net/config', 
+                      'System::NetConfig', 'r' )
+mg.close( blocking=True )
+
+def _trace( msg ):
+   if debug:
+      print msg
+
+def _sendEmail( addr, subject, text, sender ):
+   msg = MIMEText( text )   
+   msg[ 'Subject' ] = subject
+   msg[ 'From' ] = sender
+   msg[ 'To' ] = addr
+   smtp = smtplib.SMTP( 'mx' )
+   smtp.sendmail( msg[ 'From' ], addr, msg.as_string() )
+   smtp.quit()
+
+def _sendAlarm( intf, errType, base, newValue ):
+   _trace( '_sendAlarm( %s, %s, %d, %d )' % 
+           ( intf, errType, base, newValue ) )
+
+   if errType.lower() == 'fcs':
+      errType = 'FCS'
+   elif errType.lower() == 'symbol':
+      errType = 'Symbol'
+   else:
+      assert False, 'Only FCS/symbol errors are supported'
+
+   subject = 'WARNING - Arista Port Healt Monitor: ' \
+             'port errors detected on %s-%s' % \
+             ( netConfig.hostname, intf )
+   
+   text = '%s: %s errors on %s increased from %s to %s' % \
+          ( netConfig.hostname, errType, intf, base, newValue  )
+   _sendEmail( email, subject, text, 'no-reply@arista.networks' )
+
+class EthIntfCounterDirReactor( Tac.Notifiee ):
+   notifierTypeName = 'Interface::EthIntfCounterDir'
+
+   def __init__( self, notifier ):
+      _trace( 'EthIntfCounterDirReactor.__init__( %s )' % notifier.name )
+      Tac.Notifiee.__init__( self, notifier )
+
+      self.intfCounterReactor_ = None
+      for intfCounter in self.notifier().intfCounter:
+         self.handleIntfCounter( intfCounter )
+
+   @Tac.handler( 'intfCounter' )
+   def handleIntfCounter( self, key ):
+      _trace( 'handleIntfCounter( %s, %s )' % 
+              ( self.notifier().name, key ) )
+
+      if key == 'current':
+         if key in self.notifier().intfCounter:
+            self.intfCounterReactor_ = \
+                EthIntfCounterReactor( self.notifier().intfCounter[ key ] )
+         else:
+            del self.intfCounterReactor_
+
+class EthIntfCounterReactor( Tac.Notifiee ):
+   notifierTypeName = 'Interface::EthIntfCounter'
+
+   def __init__( self, notifier ):
+      Tac.Notifiee.__init__( self, notifier )
+
+      self.intf = self.notifier().fullName.split( '/' )[ -2 ]
+      _trace( 'EthIntfCounterReactor.__init__( %s )' % self.intf )
+
+      self.handleEthStatistics()
+            
+   @Tac.handler( 'ethStatistics' )
+   def handleEthStatistics( self ):
+      _trace( 'handleEthStatistics( %s )' % self.intf )
+
+      if( self.intf not in errors[ 'fcs' ] or 
+          self.notifier().fcsErrors < errors[ 'fcs' ][ self.intf ] ):
+         errors[ 'fcs' ][ self.intf ] = self.notifier().fcsErrors
+      if( self.intf not in errors[ 'symbol' ] or 
+          self.notifier().symbolErrors < errors[ 'symbol' ][ self.intf ] ):
+         errors[ 'symbol' ][ self.intf ] = self.notifier().symbolErrors
+
+      fcsBase = errors[ 'fcs' ][ self.intf ]
+      if self.notifier().fcsErrors > ( fcsBase + fcsTolerance ):
+         _sendAlarm( self.intf, 'fcs', fcsBase, self.notifier().fcsErrors )
+         # reset base
+         errors[ 'fcs' ][ self.intf ] = self.notifier().fcsErrors
+
+      symbolBase = errors[ 'symbol' ][ self.intf ]
+      if self.notifier().symbolErrors > ( symbolBase + symbolTolerance ):
+         _sendAlarm( self.intf, 'fcs', symbolBase, self.notifier().symbolErrors )
+         # reset base
+         errors[ 'symbol' ][ self.intf ] = self.notifier().symbolErrors
+
+debug = None
+email = None
+fcsTolerance = None
+symbolTolerance = None
+def main():
+   global debug, email, fcsTolerance, symbolTolerance
+
+   Tac.setproctitle( 'phm' )
+
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options] <email>'
+   op = optparse.OptionParser(usage=usage)
+   op.add_option( '-d', '--debug', dest='debug', action='store_true',
+                  help='print debug info' )
+   op.add_option( '-f', '--fcs-tolerance', dest='fcsTolerance', action='store',
+                  type='int', default=100, 
+                  help='increase in FCS errors which triggers '
+                       'an email alert (default=100)' )
+   op.add_option( '-s', '--symbol-tolerance', dest='symbolTolerance', action='store',
+                  type='int', default=100, 
+                  help='increase in symbol errors which triggers '
+                       'an email alert (default=100)' )
+   opts, args = op.parse_args()
+ 
+   if len( args ) != 1:
+      op.error( 'Invalid number of arguments. See "phm --help" for details.' )
+
+   email = args[ 0 ]
+   debug = opts.debug
+   fcsTolerance = opts.fcsTolerance
+   symbolTolerance = opts.symbolTolerance
+
+   if fcsTolerance < 1:
+      op.error( 'FCS errors tolerance must be a positive number' )
+   if symbolTolerance < 1:
+      op.error( 'symbol errors tolerance must be a positive number' )
+
+   _ = \
+       Tac.collectionChangeReactor( allCounter.intfCounterDir,
+                                    EthIntfCounterDirReactor )
+   
+   # Run forever
+   Tac.runActivities()
+
+if __name__ == '__main__':
+   main()
