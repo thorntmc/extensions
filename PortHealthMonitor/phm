@@ -88,7 +88,7 @@
 
       The base values for the interface error counters are the values
       of the counters when the script is started. Each value is reset
-      after each coorrespoding alert or if the counters are cleared.
+      after each correspoding alert or if the counters are cleared.
 
       Besides the syslog message, an email alert can also be generated
       when FCS/symbol errors exceed the pre-defined thresholds. To
@@ -101,7 +101,7 @@
       command line option.
       e.g.
          (bash:root)# /mnt/flash/phm -d <email> &
-      Note that the output can be quite verbouse so it is recommended
+      Note that the output can be quite verbose so it is recommended
       that this option is used with caution, and only for debugging
       purposes.
 
