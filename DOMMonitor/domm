@@ -117,8 +117,9 @@
       option.
       e.g.
          (bash:root)# /mnt/flash/domm -d ...
-      Note that can be quite verbouse, so it is recommended that it is used 
-      with caution, and only for debugging purposes.
+      Note that the output can be quite verbouse so it is recommended
+      that this option is used with caution, and only for debugging
+      purposes.
 
    COMPATIBILITY
       Version 2.0 has been developed and tested against EOS-4.11.3. Please 
