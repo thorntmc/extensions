@@ -38,7 +38,7 @@
 
 '''
    DESCRIPTION
-      The Port Health Monitor script sends email notifications
+      The Port Health Monitor script generates a syslog notification
       whenever the FCS/symbol errors counters on an interface exceed a
       pre-configured level.
 
@@ -47,10 +47,10 @@
       /mnt/flash.
 
       Port Health Monitor can then be started using:
-         (bash:root)# /mnt/flash/phm [<options>] <email> &
+         (bash:root)# /mnt/flash/phm [<options>] &
       and you can use 'nohup' utility in order to make this persistent
       over ssh:
-         (bash:root)# nohup /mnt/flash/phm [<options>] <email> &      
+         (bash:root)# nohup /mnt/flash/phm [<options>] &      
 
       See: 
          (bash:root)# /mnt/flash/phm --help
@@ -61,7 +61,7 @@
 
          event-handler phm
             trigger on-boot
-            action bash sudo /usr/bin/daemonize /mnt/flash/phm [<options>] <email> &
+            action bash sudo /usr/bin/daemonize /mnt/flash/phm [<options>] &
             asynchronous
       
       Port Health Monitor process name is 'phm', so standard Linux
@@ -69,7 +69,7 @@
 
       e.g.
          (bash:root)# pkill phm
-         (bash:root)# /mnt/flash/phm [<new-options>] <email> &
+         (bash:root)# /mnt/flash/phm [<new-options>] &
 
       Note that in order to make sure the Port Health Monitor does not
       restart on reboot / starts with a different config on reboot,
@@ -80,19 +80,25 @@
          (bash:root)# pkill phm                    // if running
 
    CONFIGURATION/DEBUGGING
-      The default tolerance level for the FCS/symbol errors is 100. If
-      you want to change that, please use the '--fcs--tolerance'/'--symbol-tolerance'
-      ('-f'/'-s') command-line options.
+      The default tolerance level for the FCS/symbol errors is 100. In
+      order to change that, please use the
+      '--fcs--tolerance'/'--symbol-tolerance' command-line options.
       e.g.
-         (bash:root)# nohup /mnt/flash/phm -f 500 -s 1000 <email> &
+         (bash:root)# nohup /mnt/flash/phm -f 500 -s 1000 &
 
       The base values for the interface error counters are the values
       of the counters when the script is started. Each value is reset
-      after each corresponding email notification or if the counters
-      are cleared.
+      after each coorrespoding alert or if the counters are cleared.
 
-      In order to enable debugging output to stdout, use the '-d' command line
-      option.
+      Besides the syslog message, an email alert can also be generated
+      when FCS/symbol errors exceed the pre-defined thresholds. To
+      enable this feature, configure a destination address using the
+      '--email' command-line option:
+      e.g.
+         (bash:root)# nohup /mnt/flash/phm -e phm@aristanetworks.com
+
+      In order to enable debugging output to stdout, use the '--debug'
+      command line option.
       e.g.
          (bash:root)# /mnt/flash/phm -d <email> &
       Note that the output can be quite verbouse so it is recommended
@@ -112,24 +118,50 @@ import optparse
 import smtplib
 import sys
 
+import Ark
 import EntityManager
+import Logging
 import Tac
 
 from email.mime.text import MIMEText
+
+REPLYTO_ADDR = 'no-reply@example.com' 
+
+# Register as DOM Monitor with LogManager
+Ark.configureLogManager( 'phm' )
+
+# Define log messages
+INTERFACE_FCS_ERRORS = None
+Logging.logD( id='INTERFACE_FCS_ERRORS',
+              severity=Logging.logWarning,
+              format='FCS errors detected on %s - error count increased '
+                     'from %s to %s',
+              explanation='FCS error count for interface exceeded threshold',
+              recommendedAction=Logging.CALL_SUPPORT_IF_PERSISTS )
+
+INTERFACE_SYMBOL_ERRORS = None
+Logging.logD( id='INTERFACE_SYMBOL_ERRORS',
+              severity=Logging.logWarning,
+              format='Symbol errors detected on %s - error count increased '
+                     'from %s to %s',
+              explanation='Symbol error count for interface exceeded threshold',
+              recommendedAction=Logging.CALL_SUPPORT_IF_PERSISTS )
 
 # Counter base values
 errors = {}
 errors[ 'fcs' ] = {}
 errors[ 'symbol' ] = {}
 
-# Mount data from Sysdb
-em = EntityManager.Sysdb( 'ar' )
-mg = em.mountGroup()
-allCounter = mg.mount( 'interface/counter/eth/phy',            
-                       'Interface::AllEthIntfCounterPtrDir', 'r' )    
-netConfig = mg.mount( 'sys/net/config', 
-                      'System::NetConfig', 'r' )
-mg.close( blocking=True )
+def mountData():
+   # Mount data from Sysdb
+   em = EntityManager.Sysdb( 'ar' )
+   mg = em.mountGroup()
+   allCounter = mg.mount( 'interface/counter/eth/phy',            
+                          'Interface::AllEthIntfCounterPtrDir', 'r' )    
+   netConfig = mg.mount( 'sys/net/config', 
+                         'System::NetConfig', 'r' )
+   mg.close( blocking=True )
+   return ( allCounter, netConfig )
 
 def _trace( msg ):
    if debug:
@@ -144,31 +176,43 @@ def _sendEmail( addr, subject, text, sender ):
    smtp.sendmail( msg[ 'From' ], addr, msg.as_string() )
    smtp.quit()
 
-def _sendAlarm( intf, errType, base, newValue ):
+def _sendAlarm( hostname, intf, errType, base, newValue, email ):
    _trace( '_sendAlarm( %s, %s, %d, %d )' % 
            ( intf, errType, base, newValue ) )
 
    if errType.lower() == 'fcs':
       errType = 'FCS'
+      Logging.log( INTERFACE_FCS_ERRORS, intf, base, newValue )
    elif errType.lower() == 'symbol':
       errType = 'Symbol'
+      Logging.log( INTERFACE_SYMBOL_ERRORS, intf, base, newValue )
    else:
-      assert False, 'Only FCS/symbol errors are supported'
+      sys.exit( 'ERROR: unexpected errType in _sendAlarm '
+                '(valid values are: fcs, symbol)')
+
+   if not email:
+      return
 
    subject = 'WARNING - Arista Port Health Monitor: ' \
              'port errors detected on %s-%s' % \
-             ( netConfig.hostname, intf )
+             ( hostname, intf )
    
    text = '%s: %s errors on %s increased from %s to %s' % \
-          ( netConfig.hostname, errType, intf, base, newValue  )
-   _sendEmail( email, subject, text, 'no-reply@arista.networks' )
+          ( hostname, errType, intf, base, newValue  )
+   _sendEmail( email, subject, text, REPLYTO_ADDR )
 
 class EthIntfCounterDirReactor( Tac.Notifiee ):
    notifierTypeName = 'Interface::EthIntfCounterDir'
 
-   def __init__( self, notifier ):
+   def __init__( self, notifier, hostname, email, 
+                 fcsTolerance, symbolTolerance ):
       _trace( 'EthIntfCounterDirReactor.__init__( %s )' % notifier.name )
       Tac.Notifiee.__init__( self, notifier )
+
+      self.hostname_ = hostname
+      self.email_ = email
+      self.fcsTolerance_ = fcsTolerance
+      self.symbolTolerance_ = symbolTolerance
 
       self.intfCounterReactor_ = None
       for intfCounter in self.notifier().intfCounter:
@@ -182,72 +226,84 @@ class EthIntfCounterDirReactor( Tac.Notifiee ):
       if key == 'current':
          if key in self.notifier().intfCounter:
             self.intfCounterReactor_ = \
-                EthIntfCounterReactor( self.notifier().intfCounter[ key ] )
+                EthIntfCounterReactor( self.notifier().intfCounter[ key ],
+                                       self.hostname_,
+                                       self.email_,
+                                       self.fcsTolerance_, 
+                                       self.symbolTolerance_ )
          else:
             del self.intfCounterReactor_
 
 class EthIntfCounterReactor( Tac.Notifiee ):
    notifierTypeName = 'Interface::EthIntfCounter'
 
-   def __init__( self, notifier ):
+   def __init__( self, notifier, hostname, email, 
+                 fcsTolerance, symbolTolerance ):
       Tac.Notifiee.__init__( self, notifier )
 
-      self.intf = self.notifier().fullName.split( '/' )[ -2 ]
-      _trace( 'EthIntfCounterReactor.__init__( %s )' % self.intf )
+      self.hostname = hostname
+      self.email_ = email
+      self.fcsTolerance_ = fcsTolerance
+      self.symbolTolerance_ = symbolTolerance
+
+      self.intf_ = self.notifier().fullName.split( '/' )[ -2 ]
+      _trace( 'EthIntfCounterReactor.__init__( %s )' % self.intf_ )
 
       self.handleEthStatistics()
             
    @Tac.handler( 'ethStatistics' )
    def handleEthStatistics( self ):
-      _trace( 'handleEthStatistics( %s )' % self.intf )
+      _trace( 'handleEthStatistics( %s )' % self.intf_ )
 
-      if( self.intf not in errors[ 'fcs' ] or 
-          self.notifier().fcsErrors < errors[ 'fcs' ][ self.intf ] ):
-         errors[ 'fcs' ][ self.intf ] = self.notifier().fcsErrors
-      if( self.intf not in errors[ 'symbol' ] or 
-          self.notifier().symbolErrors < errors[ 'symbol' ][ self.intf ] ):
-         errors[ 'symbol' ][ self.intf ] = self.notifier().symbolErrors
+      if( self.intf_ not in errors[ 'fcs' ] or 
+          self.notifier().fcsErrors < errors[ 'fcs' ][ self.intf_ ] ):
+         errors[ 'fcs' ][ self.intf_ ] = self.notifier().fcsErrors
+      if( self.intf_ not in errors[ 'symbol' ] or 
+          self.notifier().symbolErrors < errors[ 'symbol' ][ self.intf_ ] ):
+         errors[ 'symbol' ][ self.intf_ ] = self.notifier().symbolErrors
 
-      fcsBase = errors[ 'fcs' ][ self.intf ]
-      if self.notifier().fcsErrors > ( fcsBase + fcsTolerance ):
-         _sendAlarm( self.intf, 'fcs', fcsBase, self.notifier().fcsErrors )
+      fcsBase = errors[ 'fcs' ][ self.intf_ ]
+      if self.notifier().fcsErrors > ( fcsBase + self.fcsTolerance_ ):
+         _sendAlarm( self.hostname, self.intf_, 'fcs', fcsBase,
+                     self.notifier().fcsErrors, self.email_ )
          # reset base
-         errors[ 'fcs' ][ self.intf ] = self.notifier().fcsErrors
+         errors[ 'fcs' ][ self.intf_ ] = self.notifier().fcsErrors
 
-      symbolBase = errors[ 'symbol' ][ self.intf ]
-      if self.notifier().symbolErrors > ( symbolBase + symbolTolerance ):
-         _sendAlarm( self.intf, 'fcs', symbolBase, self.notifier().symbolErrors )
+      symbolBase = errors[ 'symbol' ][ self.intf_ ]
+      if self.notifier().symbolErrors > ( symbolBase + self.symbolTolerance_ ):
+         _sendAlarm( self.hostname, self.intf_, 'fcs', symbolBase,
+                     self.notifier().symbolErrors, self.email_ )
          # reset base
-         errors[ 'symbol' ][ self.intf ] = self.notifier().symbolErrors
+         errors[ 'symbol' ][ self.intf_ ] = self.notifier().symbolErrors
 
 debug = None
-email = None
-fcsTolerance = None
-symbolTolerance = None
 def main():
-   global debug, email, fcsTolerance, symbolTolerance
+   global debug
 
    Tac.setproctitle( 'phm' )
 
    # Create help string and parse cmd line
-   usage = 'usage: %prog [options] <email>'
+   usage = 'usage: %prog [options]'
    op = optparse.OptionParser(usage=usage)
    op.add_option( '-d', '--debug', dest='debug', action='store_true',
                   help='print debug info' )
+   op.add_option( '-e', '--email', dest='email', action='store',
+                  help='destination email for the alerts' )
    op.add_option( '-f', '--fcs-tolerance', dest='fcsTolerance', action='store',
                   type='int', default=100, 
                   help='increase in FCS errors which triggers '
-                       'an email alert (default=100)' )
+                       'an alert (default=100)' )
    op.add_option( '-s', '--symbol-tolerance', dest='symbolTolerance', action='store',
                   type='int', default=100, 
                   help='increase in symbol errors which triggers '
-                       'an email alert (default=100)' )
+                       'an alert (default=100)' )
    opts, args = op.parse_args()
  
-   if len( args ) != 1:
-      op.error( 'Invalid number of arguments. See "phm --help" for details.' )
+   if len( args ):
+      op.print_help()
+      sys.exit( '\nERROR: Invalid number of arguments' )
 
-   email = args[ 0 ]
+   email = opts.email
    debug = opts.debug
    fcsTolerance = opts.fcsTolerance
    symbolTolerance = opts.symbolTolerance
@@ -257,9 +313,11 @@ def main():
    if symbolTolerance < 1:
       op.error( 'symbol errors tolerance must be a positive number' )
 
-   _ = \
-       Tac.collectionChangeReactor( allCounter.intfCounterDir,
-                                    EthIntfCounterDirReactor )
+   allCounter, netConfig = mountData()
+   _ = Tac.collectionChangeReactor( allCounter.intfCounterDir,
+                                    EthIntfCounterDirReactor,
+                                    reactorArgs=( netConfig.hostname, email, 
+                                    fcsTolerance, symbolTolerance ) )
    
    # Run forever
    Tac.runActivities()
