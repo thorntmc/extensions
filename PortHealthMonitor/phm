@@ -108,8 +108,6 @@
       None known.
 '''
 
-
-
 import optparse
 import smtplib
 import sys
@@ -118,8 +116,6 @@ import EntityManager
 import Tac
 
 from email.mime.text import MIMEText
-
-
 
 # Counter base values
 errors = {}
