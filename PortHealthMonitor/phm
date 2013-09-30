@@ -95,7 +95,7 @@
       enable this feature, configure a destination address using the
       '--email' command-line option:
       e.g.
-         (bash:root)# nohup /mnt/flash/phm -e phm@aristanetworks.com
+         (bash:root)# nohup /mnt/flash/phm -e no-reply@example.com
 
       In order to enable debugging output to stdout, use the '--debug'
       command line option.
@@ -125,9 +125,8 @@ import Tac
 
 from email.mime.text import MIMEText
 
-REPLYTO_ADDR = 'no-reply@example.com' 
+REPLYTO_ADDR = 'no-reply@example.com'
 
-# Register as DOM Monitor with LogManager
 Ark.configureLogManager( 'phm' )
 
 # Define log messages
