@@ -437,11 +437,11 @@ def _monitorIntf( intf ):
             devId = _devId( vlan )
             ts =  _decodeTimestamp( pcapTs, hwTicks, vlan, devId )
 
-            _printTimestamp( Pcap( timestamp=ts, 
-                                   keyframe=False, 
-                                   srcIp=eth.ip.src if hasattr( eth, 'ip' ) 
-                                                    else None, 
-                                   vlanOrDevId=vlan ) )
+            _printTimestamp( 
+               Pcap( timestamp=ts, 
+                     keyframe=False, 
+                     srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
+                     vlanOrDevId=vlan ) )
 
       if not ignorePackets:
          ignorePackets = len( pcapInfo )
