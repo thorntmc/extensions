@@ -78,7 +78,7 @@
         - KEY:     key frame
    
    COMPATIBILITY 
-      Version 1.0 has been developed and tested using Python 2.7,
+      Version 3.0 has been developed and tested using Python 2.7,
       but should work on any system supporting Python 2.6 or
       later. Please reach out to support@aristanetworks.com for
       assistance if needed.

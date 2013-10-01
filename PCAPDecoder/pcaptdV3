@@ -97,7 +97,7 @@
      be decoded will show up with a timestamp of 0 in the output file.
    
    COMPATIBILITY 
-      Version 2.2 has been developed and tested against
+      Version 3.0 has been developed and tested against
       Python 2.7 on MacOS, but should work on any other operating
       system supporting Python 2.6 or later. Please reach out to
       support@aristanetworks.com for assistance if needed.
