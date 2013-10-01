@@ -155,8 +155,6 @@ vlanToDevId = {}
 #    vlanToDevId[ '*' ] = 1
 #-------------------------------------------------------------
 
-
-
 import binascii
 import dpkt
 import optparse

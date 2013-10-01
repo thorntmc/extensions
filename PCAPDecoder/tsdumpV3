@@ -129,8 +129,6 @@ vlanToDevId = {}
 #    vlanToDevId[ '*' ] = 1
 #-------------------------------------------------------------
 
-
-
 import binascii
 import dpkt
 import fcntl
@@ -297,6 +295,7 @@ def _decodeTimestamp( pcapTs, hwTicks, vlan, devId ):
          prevKf = keyframes[ devId ][ 0 ]         
 
    k1 = kf[ 0 ] if kf else None
+   utc = 0
    if k1:
       if k1 > hwTicks:
          utc = _decodeValue( hwTicks, prevKf )
@@ -331,8 +330,7 @@ def _decodeTimestamp( pcapTs, hwTicks, vlan, devId ):
 tmpFilename = '.temp'
 def _monitorIntf( intf ):
    for devId in set( vlanToDevId.values() ):
-      keyframes[ devId ] = { -1: None, 0: None, 1: None }
-      packetBuffer[ devId ] = []
+      keyframes[ devId ] = []
 
    p = subprocess.Popen( [ 'tcpdump', 
                            '-i', intf, 
@@ -404,8 +402,8 @@ def _monitorIntf( intf ):
             if keyframes[ deviceId ]:
                keyframes[ deviceId ] = keyframes[ deviceId ][ 1: ]
                
-            hwTicks = asicTime & 0x7FFFFFFF
-            keyframes[ deviceId ].append( [ hwTicks, utc ] )
+            hwTicks = asicTs & 0x7FFFFFFF
+            keyframes[ deviceId ].append( KeyframeData( hwTicks, utc ) )
                
             _printTimestamp( Pcap( Timestamp( pcapTs=pcapTs, 
                                               pcapDelta=0,  
@@ -437,9 +435,9 @@ def _monitorIntf( intf ):
 
             hwTicks = ( ( stamp & 0xffffff00 ) >> 1 ) | ( stamp & 0x7f )
             devId = _devId( vlan )
-            ts =  _decodeTimestamps( pcapTs, hwTicks, vlan, devId )
+            ts =  _decodeTimestamp( pcapTs, hwTicks, vlan, devId )
 
-            pcapData.append( Pcap( timestamp=ts, 
+            _printTimestamp( Pcap( timestamp=ts, 
                                    keyframe=False, 
                                    srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
                                    vlanOrDevId=vlan ) )

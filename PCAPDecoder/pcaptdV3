@@ -323,6 +323,7 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId ):
          prevKf = keyframes[ devId ][ 0 ]         
 
    k1 = kf[ 0 ] if kf else None
+   utc = 0
    if k1:
       if k1 > hwTicks:
          utc = _decodeValue( hwTicks, prevKf )
