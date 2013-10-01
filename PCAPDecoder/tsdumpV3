@@ -439,7 +439,8 @@ def _monitorIntf( intf ):
 
             _printTimestamp( Pcap( timestamp=ts, 
                                    keyframe=False, 
-                                   srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
+                                   srcIp=eth.ip.src if hasattr( eth, 'ip' ) 
+                                                    else None, 
                                    vlanOrDevId=vlan ) )
 
       if not ignorePackets:
