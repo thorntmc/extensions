@@ -160,8 +160,8 @@ prevHwTicks = {}
 prevPcapTime = {}
 prevUtc = {}
 
-#                    two kf in adv.       prev. kf.
-# { <deviceId> : [ [ asicTime, utc ], [ asicTime, utc ] ] }
+#                 two kf in adv.   prev. kf.
+# { <deviceId> : [ KeyframeData, KeyframeData ] }
 keyframes = {}
 
 debug = None
