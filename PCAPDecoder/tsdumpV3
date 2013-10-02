@@ -160,8 +160,8 @@ prevHwTicks = {}
 prevPcapTime = {}
 prevUtc = {}
 
-#                 two kf in adv.   prev. kf.
-# { <deviceId> : [ KeyframeData, KeyframeData ] }
+#                    two kf in adv.       prev. kf.
+# { <deviceId> : [ [ asicTime, utc ], [ asicTime, utc ] ] }
 keyframes = {}
 
 debug = None
@@ -334,7 +334,7 @@ def _monitorIntf( intf ):
 
    p = subprocess.Popen( [ 'tcpdump', 
                            '-i', intf, 
-                           '-l',                 # make stdout line buffered
+                           '-U',                 # make stdout packet buffered
                            '-w', '-' ],          # redirect output to stdout
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE )
@@ -352,9 +352,8 @@ def _monitorIntf( intf ):
    while True:
       _trace( 'Reading tcpdump...' )
 
-      readReady, _, _ = select.select( [ p.stdout.fileno() ], [], [], 0.1 )
+      readReady, _, _ = select.select( [ p.stdout.fileno() ], [], [], 1 )
       if not len( readReady ):
-         time.sleep( 1 )
          _trace( 'Nothing to read...' )
          continue
 
@@ -368,18 +367,10 @@ def _monitorIntf( intf ):
 
       pcapInfo = None
       f = open( tmpFilename )
-      try:
-         # For some odd reason dpkt raises dpkt.dpkt.NeedData here sometimes
-         # Ignore it for now.
-         pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ][ ignorePackets: ]
-      except Exception as e:
-         _trace( 'Unexpected dpkt exception: %s' % str( e ) )
-         f.close()
-         continue
+      pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ]
       f.close()
 
       _trace( 'Reading packets...' )
-
       for pcapEntry in pcapInfo:
          pcapTs, buf = pcapEntry
          if not buf:
@@ -405,16 +396,17 @@ def _monitorIntf( intf ):
             hwTicks = asicTs & 0x7FFFFFFF
             keyframes[ deviceId ].append( KeyframeData( hwTicks, utc ) )
                
-            _printTimestamp( Pcap( Timestamp( pcapTs=pcapTs, 
-                                              pcapDelta=0,  
-                                              hwTicks=hwTicks, 
-                                              hwDelta=0, 
-                                              utc=utc, 
-                                              utcDelta=0, 
-                                              rollover=False ), 
-                                   keyframe=True, 
-                                   srcIp=eth.ip.src, 
-                                   vlanOrDevId=deviceId ) )
+            _printTimestamp( 
+               Pcap( Timestamp( pcapTs=pcapTs, 
+                                pcapDelta=0,  
+                                hwTicks=hwTicks, 
+                                hwDelta=0, 
+                                utc=utc, 
+                                utcDelta=0, 
+                                rollover=False ), 
+                     keyframe=True, 
+                     srcIp=eth.ip.src, 
+                     vlanOrDevId=deviceId ) )
          else:
             _trace( 'Reading data packet...' )            
 
@@ -437,11 +429,10 @@ def _monitorIntf( intf ):
             devId = _devId( vlan )
             ts =  _decodeTimestamp( pcapTs, hwTicks, vlan, devId )
 
-            _printTimestamp( 
-               Pcap( timestamp=ts, 
-                     keyframe=False, 
-                     srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
-                     vlanOrDevId=vlan ) )
+            _printTimestamp( Pcap( timestamp=ts, 
+                                   keyframe=False, 
+                                   srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
+                                   vlanOrDevId=vlan ) )
 
       if not ignorePackets:
          ignorePackets = len( pcapInfo )

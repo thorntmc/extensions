@@ -399,7 +399,7 @@ def _monitorIntf( intf ):
 
    p = subprocess.Popen( [ 'tcpdump', 
                            '-i', intf, 
-                           '-l',                 # make stdout line buffered
+                           '-U',                 # make stdout packet buffered
                            '-w', '-' ],          # redirect output to stdout
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE )
@@ -417,9 +417,8 @@ def _monitorIntf( intf ):
    while True:
       _trace( 'Reading tcpdump...' )
 
-      readReady, _, _ = select.select( [ p.stdout.fileno() ], [], [], 0.1 )
+      readReady, _, _ = select.select( [ p.stdout.fileno() ], [], [], 1 )
       if not len( readReady ):
-         time.sleep( 1 )
          _trace( 'Nothing to read...' )
          continue
 
@@ -433,18 +432,10 @@ def _monitorIntf( intf ):
 
       pcapInfo = None
       f = open( tmpFilename )
-      try:
-         # For some odd reason dpkt raises dpkt.dpkt.NeedData here sometimes
-         # Ignore it for now.
-         pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ][ ignorePackets: ]
-      except Exception as e:
-         _trace( 'Unexpected dpkt exception: %s' % str( e ) )
-         f.close()
-         continue
+      pcapInfo = [ x for x in dpkt.pcap.Reader( f ) ][ ignorePackets: ]
       f.close()
 
       _trace( 'Reading packets...' )
-
       for pcapEntry in pcapInfo:
          pcapTs, buf = pcapEntry
          if not buf:
