@@ -29,7 +29,7 @@
 #
 # Timestamp Dump
 #
-#    Version 3.0 1/10/2013
+#    Version 3.1 1/10/2013
 #    Written by: 
 #       Matt Murray, Arista Networks
 #       Andrei Dvornic, Arista Networks
@@ -39,6 +39,7 @@
 #       2.0 - skipped
 #       3.0 - simplified decoding algorithm
 #           - decode error vs. previous versions: max 150ns in 0.04% of cases
+#       3.1 - cover all corner cases
 
 '''
    DESCRIPTION
@@ -78,7 +79,7 @@
         - KEY:     key frame
    
    COMPATIBILITY 
-      Version 3.0 has been developed and tested using Python 2.7,
+      Version 3.1 has been developed and tested using Python 2.7,
       but should work on any system supporting Python 2.6 or
       later. Please reach out to support@aristanetworks.com for
       assistance if needed.
@@ -103,7 +104,6 @@
          e.g.
          (config-if-Et<>): mac timestamp before-fcs
 '''
-
 
 vlanToDevId = {}
 # ------------------------------------------------------------
@@ -139,7 +139,6 @@ import string
 import socket
 import subprocess
 import sys
-import time
 
 from datetime import datetime
 from collections import namedtuple
@@ -273,8 +272,6 @@ def _printTimestamp( pcap ):
    print( ' '.join( row ) )
 
 def _decodeValue( timestamp, keyframe ):
-   # keyframe = [ asicTs, UTC ]
-
    if keyframe is None:
       return 0
 
@@ -297,12 +294,18 @@ def _decodeTimestamp( pcapTs, hwTicks, vlan, devId ):
    k1 = kf[ 0 ] if kf else None
    utc = 0
    if k1:
-      if k1 > hwTicks:
-         utc = _decodeValue( hwTicks, prevKf )
-      elif k1 < hwTicks:
-         utc = _decodeValue( hwTicks, kf )      
+      if k1 < hwTicks:
+         if hwTicks - k1 > 2**31 / 2:
+            utc = _decodeValue( hwTicks, prevKf )
+         else:
+            utc = _decodeValue( hwTicks, kf )
+      elif k1 > hwTicks:
+         if k1 - hwTicks < 2**31 / 2:
+            utc = _decodeValue( hwTicks, prevKf )            
+         else:
+            utc = _decodeValue( hwTicks, kf )
       else:
-         utc = kf[ 1 ] if kf else 0
+         utc = kf.utc
 
    rollover = False
    hwDelta = 0
@@ -415,7 +418,7 @@ def _monitorIntf( intf ):
                # Ignore packets which don't belong to the configured VLANs
                try:
                   vlan = VLANEthernet( buf ).vlan
-               except Exception as e:
+               except Exception:
                   continue
 
                if vlan not in vlanToDevId:
@@ -429,10 +432,11 @@ def _monitorIntf( intf ):
             devId = _devId( vlan )
             ts =  _decodeTimestamp( pcapTs, hwTicks, vlan, devId )
 
-            _printTimestamp( Pcap( timestamp=ts, 
-                                   keyframe=False, 
-                                   srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
-                                   vlanOrDevId=vlan ) )
+            _printTimestamp( 
+               Pcap( timestamp=ts, 
+                     keyframe=False, 
+                     srcIp=eth.ip.src if hasattr( eth, 'ip' ) else None, 
+                     vlanOrDevId=vlan ) )
 
       if not ignorePackets:
          ignorePackets = len( pcapInfo )

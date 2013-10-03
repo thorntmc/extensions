@@ -29,13 +29,14 @@
 #
 # Timestamp Dump
 #
-#    Version 1.0 31/7/2013
+#    Version 1.1 31/7/2013
 #    Written by: 
 #       Matt Murray, Arista Networks
 #       Andrei Dvornic, Arista Networks
 #
 #    Revision history:
 #       1.0 - initial release
+#       1.1 - cover all corner cases
 
 '''
    DESCRIPTION
@@ -75,7 +76,7 @@
         - KEY:     key frame
    
    COMPATIBILITY 
-      Version 1.0 has been developed and tested using Python 2.7,
+      Version 1.1 has been developed and tested using Python 2.7,
       but should work on any system supporting Python 2.6 or
       later. Please reach out to support@aristanetworks.com for
       assistance if needed.
@@ -109,7 +110,6 @@
          (config-if-Et<>): mac timestamp before-fcs
 '''
 
-
 vlanToDevId = {}
 # ------------------------------------------------------------
 # !!! INSERT VLAN->deviceId mapping below !!!
@@ -134,8 +134,6 @@ vlanToDevId = {}
 #    vlanToDevId[ '*' ] = 1
 #-------------------------------------------------------------
 
-
-
 import binascii
 import dpkt
 import fcntl
@@ -146,7 +144,6 @@ import string
 import socket
 import subprocess
 import sys
-import time
 
 from datetime import datetime
 from collections import namedtuple
@@ -168,7 +165,7 @@ prevPcapTime = {}
 prevUtc = {}
 
 # Keyframes - at most three keyframes are required for decoding UTC
-# { <deviceId> : [ -1: KeyframeData
+# { <deviceId> : [ -1: KeyframeData,
 #                   0: KeyframeData, 
 #                   1: KeyframeData ] }
 keyframes = {}
@@ -286,6 +283,9 @@ def _printTimestamp( pcap ):
    print( ' '.join( row ) )
 
 def _decodeValue( timestamp, keyframe ):
+   if not keyframe:
+      return 0
+
    diff = timestamp - keyframe.asicTs
    if diff < 0:
       diff += MAX_TICKS
@@ -302,55 +302,32 @@ def _decodeTimestamp( pcapTs, hwTicks, vlan, devId ):
    k2 = nextKf.asicTs if nextKf else None
 
    utc = 0
-   if k1 and k2:
-      if k1 < hwTicks:
-         if hwTicks > k2:
-            if k1 < k2:
-               # nextKf was timestamped first, but packet egressed first
-               # out of the asi, because of congestion
-               if nextKf:
-                  utc = _decodeValue( hwTicks, nextKf )
-            else:
-               # nextKf rollover
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )            
-         elif hwTicks < k2:
-            if k1 < k2:
-               # basic case
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )
-            else:
-               assert False
-      elif k1 > hwTicks:
-         if hwTicks > k2:
-            if k1 < k2:
-               assert False
-            else:
-               assert k1 > k2
-               if hwTicks - k2 > k1 - hwTicks:
-                  # nextKf rollover, packet timestamped within startup offser of kf
-                  if prevKf:
-                     utc = _decodeValue( hwTicks, prevKf )            
-               else:
-                  # nexKf rollover and timestamped first, packet rollover 
-                  # and egressed first
-                  utc = _decodeValue( hwTicks, nextKf )
-         elif hwTicks < k2:
-            if k1 < k2:
-               # packet timestamped within startup offser of kf
-               if prevKf:
-                  utc = _decodeValue( hwTicks, prevKf )
-            else:
-               assert k1 > k2
-               # rollover - both packet and nextKf
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )
-      elif k1 == hwTicks:
-         if kf:
-            utc = kf[ 1 ]
-      elif k2 == hwTicks:
-         if nextKf:
-            utc = nextKf[ 1 ]
+   if k1 and k1 == hwTicks:
+      utc = kf[ 1 ]
+   elif k2 and k2 == hwTicks:
+      utc = nextKf[ 1 ]
+   elif k1 and k2:
+      if hwTicks < k1 < k2:
+         if k1 - hwTicks > 2**31 / 2:
+            utc = _decodeValue( hwTicks, nextKf )            
+         else:
+            utc = _decodeValue( hwTicks, prevKf )
+      elif hwTicks < k2 < k1:
+         utc = _decodeValue( hwTicks, kf )
+      elif k2 < hwTicks < k1:
+         if hwTicks - k2 > k1 - hwTicks:
+            utc = _decodeValue( hwTicks, prevKf )            
+         else:
+            utc = _decodeValue( hwTicks, nextKf )         
+      elif k2 < k1 < hwTicks:
+         utc = _decodeValue( hwTicks, kf )
+      elif k1 < k2 < hwTicks:
+         if hwTicks - k2 > 2**31 / 2:
+            utc = _decodeValue( hwTicks, prevKf )            
+         else:
+            utc = _decodeValue( hwTicks, nextKf )
+      elif k1 < hwTicks < k2:
+         utc = _decodeValue( hwTicks, kf )
       else:
          assert False
 
@@ -477,7 +454,7 @@ def _monitorIntf( intf ):
                # Ignore packets which don't belong to the configured VLANs
                try:
                   vlan = VLANEthernet( buf ).vlan
-               except Exception as e:
+               except Exception:
                   continue
 
                if vlan not in vlanToDevId:

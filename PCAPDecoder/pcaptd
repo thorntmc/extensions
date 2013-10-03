@@ -29,7 +29,7 @@
 #
 # PCAP Timestamp Decoder
 #
-#    Version 2.2 12/7/2013
+#    Version 2.3 12/7/2013
 #    Written by: 
 #       John Peach, Arista Networks
 #       Matt Murray, Arista Networks
@@ -45,6 +45,7 @@
 #       2.2 - added support for untagged traffic
 #           - added warning for skipped packets
 #           - added error message on missing deviceId configuration
+#       2.3 - cover all corner cases
 
 '''
    DESCRIPTION
@@ -95,7 +96,7 @@
      be decoded will show up with a timestamp of 0 in the output file.
    
    COMPATIBILITY 
-      Version 2.2 has been developed and tested against
+      Version 2.3 has been developed and tested against
       Python 2.7 on MacOS, but should work on any other operating
       system supporting Python 2.6 or later. Please reach out to
       support@aristanetworks.com for assistance if needed.
@@ -129,7 +130,6 @@
          e.g.
          (config-if-Et<>): mac timestamp before-fcs
 '''
-
 
 vlanToDevId = {}
 # ------------------------------------------------------------
@@ -169,6 +169,7 @@ Timestamp = namedtuple( 'Timestamp', 'pcapTs pcapDelta hwTicks '
                         'hwDelta utc utcDelta rollover' )
 Pcap = namedtuple( 'Pcap', 'timestamp keyframe ' 
                    'srcIp vlanOrDevId' )
+KeyframeData = namedtuple( 'KeyframeData', 'asicTs utc' )
 
 # Based on the clock rate (350Mhz)
 TICK_LENGTH = 20.0/7.0
@@ -179,7 +180,7 @@ prevHwTicks = {}
 prevPcapTime = {}
 prevUtc = {}
 
-# { <deviceId> : { no. : [ asicTime, utc ] } }
+# { <deviceId> : { no. : KeyframeData } }
 keyframes = {}
 
 class VLANEthernet( dpkt.ethernet.Ethernet ):
@@ -301,11 +302,13 @@ def _printTimestamps( pcapData, showPcap, showUTC, showTicks, showDelta,
       f.close()
 
 def _decodeValue( timestamp, keyframe ):
-   # keyframe = [ asicTs, UTC ]
-   diff = timestamp - keyframe[ 0 ]
+   if not keyframe:
+      return 0
+
+   diff = timestamp - keyframe.asicTs
    if diff < 0:
       diff += MAX_TICKS
-   return keyframe[ 1 ] + long( round( diff * TICK_LENGTH ) )
+   return keyframe.utc + long( round( diff * TICK_LENGTH ) )
 
 def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
    # packet arrived between kf and nextKf
@@ -321,59 +324,36 @@ def _decodeTimestamps( pcapTs, hwTicks, vlan, devId, kfIndex ):
       if ( kfIndex + 1 ) in  keyframes[ devId ]:
          nextKf = keyframes[ devId ][ kfIndex + 1 ]
 
-   k1 = kf[ 0 ] if kf else None
-   k2 = nextKf[ 0 ] if nextKf else None
+   k1 = kf.asicTs if kf else None
+   k2 = nextKf.asicTs if nextKf else None
 
    utc = 0
-   if k1 and k2:
-      if k1 < hwTicks:
-         if hwTicks > k2:
-            if k1 < k2:
-               # nextKf was timestamped first, but packet egressed first
-               # out of the asic, because of congestion
-               if nextKf:
-                  utc = _decodeValue( hwTicks, nextKf )
-            else:
-               # nextKf rollover
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )            
-         elif hwTicks < k2:
-            if k1 < k2:
-               # basic case
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )
-            else:
-               assert False
-      elif k1 > hwTicks:
-         if hwTicks > k2:
-            if k1 < k2:
-               assert False
-            else:
-               assert k1 > k2
-               if hwTicks - k2 > k1 - hwTicks:
-                  # nextKf rollover, packet timestamped within startup offset of kf
-                  if prevKf:
-                     utc = _decodeValue( hwTicks, prevKf )            
-               else:
-                  # nexKf rollover and timestamped first, packet rollover 
-                  # and egressed first
-                  utc = _decodeValue( hwTicks, nextKf )
-         elif hwTicks < k2:
-            if k1 < k2:
-               # packet timestamped within startup offset of kf
-               if prevKf:
-                  utc = _decodeValue( hwTicks, prevKf )
-            else:
-               assert k1 > k2
-               # rollover - both packet and nextKf
-               if kf:
-                  utc = _decodeValue( hwTicks, kf )
-      elif k1 == hwTicks:
-         if kf:
-            utc = kf[ 1 ]
-      elif k2 == hwTicks:
-         if nextKf:
-            utc = nextKf[ 1 ]
+   if k1 and k1 == hwTicks:
+      utc = kf.utc
+   elif k2 and k2 == hwTicks:
+      utc = nextKf.utc
+   elif k1 and k2:
+      if hwTicks < k1 < k2:
+         if k1 - hwTicks > 2**31 / 2:
+            utc = _decodeValue( hwTicks, nextKf )            
+         else:
+            utc = _decodeValue( hwTicks, prevKf )
+      elif hwTicks < k2 < k1:
+         utc = _decodeValue( hwTicks, kf )
+      elif k2 < hwTicks < k1:
+         if hwTicks - k2 > k1 - hwTicks:
+            utc = _decodeValue( hwTicks, prevKf )            
+         else:
+            utc = _decodeValue( hwTicks, nextKf )         
+      elif k2 < k1 < hwTicks:
+         utc = _decodeValue( hwTicks, kf )
+      elif k1 < k2 < hwTicks:
+         if hwTicks - k2 > 2**31 / 2:
+            utc = _decodeValue( hwTicks, prevKf )            
+         else:
+            utc = _decodeValue( hwTicks, nextKf )
+      elif k1 < hwTicks < k2:
+         utc = _decodeValue( hwTicks, kf )
       else:
          assert False
 
@@ -422,8 +402,8 @@ def _computeKeyframeData( pcapInfo ):
             kfIndex = 1
          else:
             kfIndex = keyframes[ deviceId ].keys()[ -1 ] + 1
-         keyframes[ deviceId ][ kfIndex ] = [ asicTime & 0x7FFFFFFF, 
-                                              utc ]
+         keyframes[ deviceId ][ kfIndex ] = KeyframeData( asicTime & 0x7FFFFFFF, 
+                                                          utc )
 
 def _readPcap( inputFile, outputFile ):
    try:
@@ -464,9 +444,9 @@ def _readPcap( inputFile, outputFile ):
          keyframe = keyframes[ deviceId ][ index ] 
          pcapData.append( Pcap( Timestamp( pcapTs=pcapTs, 
                                            pcapDelta=0, 
-                                           hwTicks=keyframe[ 0 ], 
+                                           hwTicks=keyframe.asicTs, 
                                            hwDelta=0, 
-                                           utc=keyframe[ 1 ], 
+                                           utc=keyframe.utc, 
                                            utcDelta=0, 
                                            rollover=False ), 
                                 keyframe=True, 
