@@ -165,6 +165,8 @@ Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
               format='TX burst (%dB/~%dus) detected on port %d',
               explanation='Traffic burst detected on TX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
+
+
  
 debug = False
 def _trace( msg ):
@@ -207,6 +209,7 @@ def _verifyHwModel():
    pc = PyClient.PyClient( 'ar', 'Sysdb' )
    fs = pc.root()[ 'ar' ][ 'Sysdb' ][ 'hardware' ][ 'entmib' ].fixedSystem
    return ( fs and re.match( '^DCS-715', fs.modelName ) )
+
 
 class BurstMonitor( object ):
 
@@ -303,6 +306,7 @@ class BurstMonitor( object ):
          prevLastRxCounter = rxCounters[ -1 ]
          prevLastTxCounter = txCounters[ -1 ]
 
+
 def main():
    # Create help string and parse cmd line
    usage = 'usage: %prog [options] <interface number>'
@@ -336,6 +340,7 @@ def main():
    Tac.setproctitle( 'ibm-%s' % args[ 0 ] )
 
    _ = BurstMonitor( args[ 0 ], opts.rxTolerance, opts.txTolerance )
+
 
 if __name__ == '__main__':
    main()
