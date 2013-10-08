@@ -249,7 +249,7 @@ class BurstMonitor( object ):
                               ( interBatchDuration / batchDuration ) /
                               BATCH_GAP_BURST_DETECTION_FACTOR ):
                Logging.log( INTERFACE_RX_BURST_DETECTED,
-                            burst, interBatchDuration,
+                            rxBurst, interBatchDuration,
                             self.interfaceNo_ )
 
             txBurst = txCounters[ 0 ] - prevLastTxCounter
@@ -257,7 +257,7 @@ class BurstMonitor( object ):
                               ( interBatchDuration / batchDuration ) /
                               BATCH_GAP_BURST_DETECTION_FACTOR ):
                Logging.log( INTERFACE_TX_BURST_DETECTED,
-                            burst, interBatchDuration,
+                            txBurst, interBatchDuration,
                             self.interfaceNo_ )
 
          # Burst detection for batch reads
