@@ -29,12 +29,13 @@
 #
 # Interface Burst Monitor
 #
-#    Version 1.0
+#    Version 1.1
 #    Written by: 
 #       Andrei Dvornic, Arista Networks
 #
 #    Revision history:
 #       1.0 - initial release
+#       1.1 - use fm6000GetPortMibCounters and no batch reads
 
 """
    DESCRIPTION
@@ -101,29 +102,15 @@
       purposes.
 
    COMPATIBILITY
-      Version 1.0 has been developed and tested against <TODO>. Please
+      Version 1.1 has been developed and tested against N/A***. Please
       reach out to support@aristanetworks.com if you want to run this
       against a different EOS release.
 
+      ***EOS version not release yet - please contact
+         support@aristanetworks.com for details.
+
   LIMITATIONS
-     The script works by polling the hardware counters multiple times
-     (see BATH_SIZE below) and then processing the results. The delay
-     between two consecutive reads in the same batch or requests is
-     ~700us.
-
-     While processing the results for a batch of hardware reads, there
-     will be an inter batch delay considerably higher than the one
-     between subsequent reads in the same batch. This makes burst
-     detection in the inter batch period tricky. In order to detect
-     bursts during this period we use the following empirical
-     threshold:
-
-     threshold = intra_batch_threshold * BATCH_SIZE *
-                ( interBatchDuration / batchDuration ) /
-                BATCH_GAP_BURST_DETECTION_FACTOR 
-
-     where BATCH_GAP_BURST_DETECTION_FACTOR is by default 2 and can be
-     updated at the top of the script, if necessary.
+     The script works by polling the hardware counters ever 1-2ms.
 """
 
 import ast
@@ -137,12 +124,8 @@ import Logging
 import PyClient
 import Tac
 
-# Number of consecutive reads to the hw. registers in one batch
-BATCH_SIZE = 1000
 
-# Empirical factor used for detecting bursts during inter batch read
-# periods
-BATCH_GAP_BURST_DETECTION_FACTOR = 2
+
 
 SPEED_TO_BYTES = { 'speed1Gbps':  1024**3 / 8,
                    'speed10Gbps': 10 * 1024**3 / 8,
@@ -167,28 +150,11 @@ Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
 
- 
+
 debug = False
 def _trace( msg ):
    if debug:
       print msg
-
-def _batchCmd( portNo ):
-   cmd = '''
-from FmApi import fmGetPortCounters
-counters = []
-'''
-   for _ in xrange( BATCH_SIZE ):
-      cmd += 'counters.append( fmGetPortCounters( 0, %s ) )\n' % portNo
-         
-   cmd += '''
-print counters[ 0 ].timestamp
-print counters[ -1 ].timestamp
-print [ x.cntRxGoodOctets for x in counters ]
-print [ x.cntTxOctets for x in counters ]
-'''
-   _trace( '_portCmd( %s )' % portNo )
-   return cmd
 
 def _physicalPortNo( pc, logicalPortNo ):
    cmd = '''
@@ -223,88 +189,39 @@ class BurstMonitor( object ):
       self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold
       self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold
 
-      self.batchCmd_ = _batchCmd( _physicalPortNo( self.pc_, self.interfaceNo_ ) )
       self.checkBurst()
 
    def checkBurst( self ):
-      prevLastReadTs = None
-      prevLastRxCounter = None
-      prevLastTxCounter = None
+
+      cmd = '''
+from FmApi import fm6000GetPortMibCounters
+x = fm6000GetPortMibCounters( 0, %s )
+print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
+''' % _physicalPortNo( self.pc_, self.interfaceNo_ )
+
+      prevTs = None
+      prevRxCounter = None
+      prevTxCounter = None
 
       while True:
-         data = self.pc_.execute( self.batchCmd_ ).split( '\n' )
+         data = self.pc_.execute( cmd ).split()
 
-         firstReadTs = int( data[ 0 ] )
-         lastReadTs = int( data[ 1 ] )
-            
-         batchDuration = lastReadTs - firstReadTs
-         avgReadDuration = ( batchDuration + 0.0 ) / BATCH_SIZE
+         ts = int( data[ 0 ] )
+         rxCounter = int( data[ 1 ] )
+         txCounter = int( data[ 2 ] )
 
-         rxCounters = ast.literal_eval( data[ 2 ] )
-         txCounters = ast.literal_eval( data[ 3 ] )
+         if prevTs:
+            _trace( '%s - checkBurst( %s ): period: %dus,rx:%dB, tx:%dB' % 
+                    ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f' ), 
+                      self.interfaceNo_, 
+                      ts - prevTs,
+                      rxCounter - prevRxCounter, 
+                      txCounter - prevTxCounter ) )
 
-         # Burst detection for intra batch reads period
-         if prevLastReadTs:
-            interBatchDuration = firstReadTs - prevLastReadTs
+         prevTs = ts
+         prevRxCounter = rxCounter
+         prevTxCounter = txCounter
 
-            rxBurst = rxCounters[ 0 ] - prevLastRxCounter
-            if rxBurst > ( self.rxThreshold_ * BATCH_SIZE *
-                              ( interBatchDuration / batchDuration ) /
-                              BATCH_GAP_BURST_DETECTION_FACTOR ):
-               Logging.log( INTERFACE_RX_BURST_DETECTED,
-                            rxBurst, interBatchDuration,
-                            self.interfaceNo_ )
-
-            txBurst = txCounters[ 0 ] - prevLastTxCounter
-            if txBurst > ( self.txThreshold_ * BATCH_SIZE *
-                              ( interBatchDuration / batchDuration ) /
-                              BATCH_GAP_BURST_DETECTION_FACTOR ):
-               Logging.log( INTERFACE_TX_BURST_DETECTED,
-                            txBurst, interBatchDuration,
-                            self.interfaceNo_ )
-
-         # Burst detection for batch reads
-         rxMaxBurst = 0
-         for i in xrange( BATCH_SIZE - 2 ):
-            burst = rxCounters[ i + 1 ] - rxCounters[ i ]
-            # counter rollOver
-            if burst < 0:
-               burst += 2**65
-            if burst > rxMaxBurst:
-               rxMaxBurst = burst
-         if rxMaxBurst > self.rxThreshold_:
-            Logging.log( INTERFACE_RX_BURST_DETECTED,
-                         rxMaxBurst, avgReadDuration,
-                         self.interfaceNo_ )
-
-         txMaxBurst = 0
-         for i in xrange( BATCH_SIZE - 2 ):
-            burst = txCounters[ i + 1 ] - txCounters[ i ]
-            # counter rollOver
-            if burst < 0:
-               burst += 2**65
-            if burst > txMaxBurst:
-               txMaxBurst = burst
-         if txMaxBurst > self.txThreshold_:
-            Logging.log( INTERFACE_TX_BURST_DETECTED,
-                         txMaxBurst, avgReadDuration,
-                         self.interfaceNo_ )
-
-         if prevLastReadTs:
-            _trace( '%s - checkBurst( %s ): batch_period: %dus, avg_read:%dus, '
-                    'batch_gap:%dus(%.2f%% of batch_period + batch_gap), '
-                    'rxMaxBurst:%d, txMaxBurst:%d' % 
-                    ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f'), 
-                      self.interfaceNo_,
-                      batchDuration,
-                      avgReadDuration, interBatchDuration, 
-                      ( interBatchDuration * 100.0 ) / 
-                      ( lastReadTs  - prevLastReadTs ),
-                      rxMaxBurst, txMaxBurst ) )
-
-         prevLastReadTs = lastReadTs
-         prevLastRxCounter = rxCounters[ -1 ]
-         prevLastTxCounter = txCounters[ -1 ]
 
 
 def main():
