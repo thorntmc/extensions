@@ -183,7 +183,7 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
 
       if val < 10**4:
          if val < 10:
-            return '%dB' % val
+            return '%db' % val
          else:
             return '%.2fKb' % ( val / 10**3 )
       else:
