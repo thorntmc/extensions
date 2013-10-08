@@ -187,7 +187,7 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
          else:
             return '%dB' % val
       else:
-         return '%.2fKb' % ( val / 10**6 )
+         return '%.2fMb' % ( val / 10**6 )
 
    def checkBurst( self ):
 
