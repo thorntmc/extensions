@@ -218,7 +218,7 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
                             txString, duration, self.interfaceNo_ )
 
             if prevTs:
-               _trace( '%s - checkBurst( %s ): period: %.2fms,rx:%s, tx:%s' % 
+               _trace( '%s - checkBurst( %s ): period: %.2fms, rx:%s, tx:%s' % 
                        ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f' ), 
                          self.interfaceNo_, duration, 
                          rxString, txString ) )
