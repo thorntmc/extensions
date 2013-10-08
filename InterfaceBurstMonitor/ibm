@@ -110,7 +110,7 @@
          support@aristanetworks.com for details.
 
   LIMITATIONS
-     The script works by polling the hardware counters ever 1-2ms.
+     The script works by polling the hardware counters ever ~1-2ms.
 """
 
 import ast
