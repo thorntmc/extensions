@@ -195,13 +195,13 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
 
             if rxBurst < 0:
                   rxBurst += 2**65
-            if rxBurst > self.rxThreshold_:
+            if ( rxBurst * 10.0**6 / duration ) > self.rxThreshold_:
                Logging.log( INTERFACE_RX_BURST_DETECTED,
                             rxBurst, duration, self.interfaceNo_ )
 
             if txBurst < 0:
                   txBurst += 2**65
-            if txBurst > self.txThreshold_:
+            if ( txBurst * 10.0**6 / duration ) > self.txThreshold_:
                Logging.log( INTERFACE_TX_BURST_DETECTED,
                             txBurst, duration, self.interfaceNo_ )
 
