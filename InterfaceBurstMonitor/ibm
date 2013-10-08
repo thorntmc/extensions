@@ -130,12 +130,9 @@ import ast
 import datetime
 import optparse
 import re
-import subprocess
 import sys
-import time
 
 import Ark
-import EntityManager
 import Logging
 import PyClient
 import Tac
@@ -247,16 +244,16 @@ class BurstMonitor( object ):
          if prevLastReadTs:
             interBatchDuration = firstReadTs - prevLastReadTs
 
-            burst = rxCounters[ 0 ] - prevLastRxCounter
-            if rxMaxBurst > ( self.rxThreshold_ * BATCH_SIZE *
+            rxBurst = rxCounters[ 0 ] - prevLastRxCounter
+            if rxBurst > ( self.rxThreshold_ * BATCH_SIZE *
                               ( interBatchDuration / batchDuration ) /
                               BATCH_GAP_BURST_DETECTION_FACTOR ):
                Logging.log( INTERFACE_RX_BURST_DETECTED,
                             burst, interBatchDuration,
                             self.interfaceNo_ )
 
-            burst = txCounters[ 0 ] - prevLastTxCounter
-            if txMaxBurst > ( self.txThreshold_ * BATCH_SIZE *
+            txBurst = txCounters[ 0 ] - prevLastTxCounter
+            if txBurst > ( self.txThreshold_ * BATCH_SIZE *
                               ( interBatchDuration / batchDuration ) /
                               BATCH_GAP_BURST_DETECTION_FACTOR ):
                Logging.log( INTERFACE_TX_BURST_DETECTED,
@@ -298,7 +295,8 @@ class BurstMonitor( object ):
                       self.interfaceNo_,
                       batchDuration,
                       avgReadDuration, interBatchDuration, 
-                      ( interBatchDuration * 100.0 ) / ( lastReadTs  - prevLastReadTs ),
+                      ( interBatchDuration * 100.0 ) / 
+                      ( lastReadTs  - prevLastReadTs ),
                       rxMaxBurst, txMaxBurst ) )
 
          prevLastReadTs = lastReadTs
@@ -312,11 +310,13 @@ def main():
    op.add_option( '-d', '--debug', dest='debug', action='store_true',
                   help='print debug info' )
    op.add_option( '-r', '--rx-tolerance', dest='rxTolerance', action='store',
-                  type='int', default=80, help='RX burst size (% of bandwidth) which '
-                  'triggers syslog messages (default=80)' )
+                  type='int', default=80, 
+                  help='RX burst size (% of bandwidth) which '
+                       'triggers syslog messages (default=80)' )
    op.add_option( '-t', '--tx-tolerance', dest='txTolerance', action='store',
-                  type='int', default=80, help='TX burst size (% of bandwidth) which '
-                  'triggers syslog messages (default=80)' )
+                  type='int', default=80, 
+                  help='TX burst size (% of bandwidth) which '
+                       'triggers syslog messages (default=80)' )
    opts, args = op.parse_args()
  
    global debug
