@@ -1,0 +1,341 @@
+#!/usr/bin/env python 
+#
+# Copyright (c) 2013, Arista Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#  - Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#  - Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in the
+# documentation and/or other materials provided with the distribution.
+#  - Neither the name of Arista Networks nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ARISTA NETWORKS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Interface Burst Monitor
+#
+#    Version 1.0
+#    Written by: 
+#       Andrei Dvornic, Arista Networks
+#
+#    Revision history:
+#       1.0 - initial release
+
+"""
+   DESCRIPTION
+      The Interface Burst Monitor script monitors the maximum bit rate
+      on an interface and generates a syslog notification whenever a
+      burst of traffic exceeding a pre-defined threshold is detected
+      on either the RX or TX side of the interface.
+
+   INSTALLATION
+      In order to install the Interface Burst Monitor, copy 'ibm' to
+      /mnt/flash.
+
+      Interface Burst Monitor can then be started using:
+         (bash:root)# /mnt/flash/ibm [<options>] <interface number>&
+      and you can use 'nohup' utility in order to make this persistent
+      over ssh:
+         (bash:root)# nohup /mnt/flash/ibm [<options>] 
+            <interface number> &
+
+      See: 
+         (bash:root)# /mnt/flash/ibm --help
+      for details about the command-line options.
+
+      In order to run the Interface Burst Monitor as a daemon
+      (persistent after reboot), add the following to the
+      startup-config:
+         event-handler ibm
+            trigger on-boot
+            action bash sudo /usr/bin/daemonize /mnt/flash/ibm
+               [<options>] <interface number> &
+            asynchronous
+      
+      Interface Burst Monitor process name is 'ibm-<interface
+      number>', so standard Linux tools can be used to stop and
+      restart it with different options:
+      e.g.
+         (bash:root)# pkill ibm-1
+         (bash:root)# /mnt/flash/ibm [<new-options>] 1 &
+
+      Note that in order to make sure the Interface Burst Monitor does
+      not restart on reboot / starts with a different config on
+      reboot, the startup-config has to be changed accordingly.
+
+      In order to uninstall Interface Burst Monitor, use:
+         (bash:root)# rm /mnt/flash/ibm
+         (bash:root)# pkill -f ibm
+
+   CONFIGURATION/DEBUGGING
+      Log messages are generated whenever the TX/RX maximum bit rate
+      exceeds certain thresholds (tolerances). These tolerance levels
+      are expressed in terms of percentage of the link speed and are
+      by default set at 80%, for both RX and TX.  In order to change
+      the tolerance levels, use the --rx-tolerance/--tx-tolerance
+      command line options:
+      e.g. 
+         (bash:root)# /mnt/flash/ibm -s 60 -t 90 <interface number> &
+      
+      In order to enable debugging output to stdout, use the '-d'
+      command line option.
+      e.g.
+         (bash:root)# /mnt/flash/ibm -d ...
+      Note that the output can be quite verbouse so it is recommended
+      that this option is used with caution, and only for debugging
+      purposes.
+
+   COMPATIBILITY
+      Version 1.0 has been developed and tested against <TODO>. Please
+      reach out to support@aristanetworks.com if you want to run this
+      against a different EOS release.
+
+  LIMITATIONS
+     The script works by polling the hardware counters multiple times
+     (see BATH_SIZE below) and then processing the results. The delay
+     between two consecutive reads in the same batch or requests is
+     ~700us.
+
+     While processing the results for a batch of hardware reads, there
+     will be an inter batch delay considerably higher than the one
+     between subsequent reads in the same batch. This makes burst
+     detection in the inter batch period tricky. In order to detect
+     bursts during this period we use the following empirical
+     threshold:
+
+     threshold = intra_batch_threshold * BATCH_SIZE *
+                ( interBatchDuration / batchDuration ) /
+                BATCH_GAP_BURST_DETECTION_FACTOR 
+
+     where BATCH_GAP_BURST_DETECTION_FACTOR is by default 2 and can be
+     updated at the top of the script, if necessary.
+"""
+
+import ast
+import datetime
+import optparse
+import re
+import subprocess
+import sys
+import time
+
+import Ark
+import EntityManager
+import Logging
+import PyClient
+import Tac
+
+# Number of consecutive reads to the hw. registers in one batch
+BATCH_SIZE = 1000
+
+# Empirical factor used for detecting bursts during inter batch read
+# periods
+BATCH_GAP_BURST_DETECTION_FACTOR = 2
+
+SPEED_TO_BYTES = { 'speed1Gbps':  1024**3 / 8,
+                   'speed10Gbps': 10 * 1024**3 / 8,
+                   'speed40Gbps': 40 * 1024**3 / 8 }
+
+
+
+Ark.configureLogManager( 'ibm' )
+
+INTERFACE_RX_BURST_DETECTED = None
+Logging.logD( id='INTERFACE_RX_BURST_DETECTED',
+              severity=Logging.logWarning,
+              format='RX burst (%dB/~%dus) detected on port %d',
+              explanation='Traffic burst detected on RX side of the interface.',
+              recommendedAction=Logging.NO_ACTION_REQUIRED )
+
+INTERFACE_TX_BURST_DETECTED = None
+Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
+              severity=Logging.logWarning,
+              format='TX burst (%dB/~%dus) detected on port %d',
+              explanation='Traffic burst detected on TX side of the interface.',
+              recommendedAction=Logging.NO_ACTION_REQUIRED )
+ 
+debug = False
+def _trace( msg ):
+   if debug:
+      print msg
+
+def _batchCmd( portNo ):
+   cmd = '''
+from FmApi import fmGetPortCounters
+counters = []
+'''
+   for _ in xrange( BATCH_SIZE ):
+      cmd += 'counters.append( fmGetPortCounters( 0, %s ) )\n' % portNo
+         
+   cmd += '''
+print counters[ 0 ].timestamp
+print counters[ -1 ].timestamp
+print [ x.cntRxGoodOctets for x in counters ]
+print [ x.cntTxOctets for x in counters ]
+'''
+   _trace( '_portCmd( %s )' % portNo )
+   return cmd
+
+def _physicalPortNo( pc, logicalPortNo ):
+   cmd = '''
+from FmApi import fmDbgMapLogicalPortToPhysical
+print fmDbgMapLogicalPortToPhysical( 0, %s )
+''' % logicalPortNo
+
+   try:
+      portNo = pc.execute( cmd ).split( '\n' )[ 0 ]
+   except PyClient.RpcError:
+      sys.exit( 'ERROR: physical port number could not be read!' )
+
+   _trace( '_physicalPortNo( %s ):%s' % ( logicalPortNo, portNo ) )
+   return portNo
+
+def _verifyHwModel():
+   _trace( '_verifyHwModel()' )
+   pc = PyClient.PyClient( 'ar', 'Sysdb' )
+   fs = pc.root()[ 'ar' ][ 'Sysdb' ][ 'hardware' ][ 'entmib' ].fixedSystem
+   return ( fs and re.match( '^DCS-715', fs.modelName ) )
+
+class BurstMonitor( object ):
+
+   def __init__( self, interfaceNo, rxThreshold, txThreshold ):
+      _trace( 'BurstMonitor.__init( %s )' % interfaceNo )
+      self.interfaceNo_ = interfaceNo
+      self.pc_ = PyClient.PyClient( 'ar', 'FocalPointV2' )
+
+      status = self.pc_.root()[ 'ar' ][ 'Sysdb' ][ 'interface' ][ 'status' ]
+      speed = status[ 'eth' ][ 'intf' ][ 'Ethernet%s' % interfaceNo ].speed
+      self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold
+      self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold
+
+      self.batchCmd_ = _batchCmd( _physicalPortNo( self.pc_, self.interfaceNo_ ) )
+      self.checkBurst()
+
+   def checkBurst( self ):
+      prevLastReadTs = None
+      prevLastRxCounter = None
+      prevLastTxCounter = None
+
+      while True:
+         data = self.pc_.execute( self.batchCmd_ ).split( '\n' )
+
+         firstReadTs = int( data[ 0 ] )
+         lastReadTs = int( data[ 1 ] )
+            
+         batchDuration = lastReadTs - firstReadTs
+         avgReadDuration = ( batchDuration + 0.0 ) / BATCH_SIZE
+
+         rxCounters = ast.literal_eval( data[ 2 ] )
+         txCounters = ast.literal_eval( data[ 3 ] )
+
+         # Burst detection for intra batch reads period
+         if prevLastReadTs:
+            interBatchDuration = firstReadTs - prevLastReadTs
+
+            burst = rxCounters[ 0 ] - prevLastRxCounter
+            if rxMaxBurst > ( self.rxThreshold_ * BATCH_SIZE *
+                              ( interBatchDuration / batchDuration ) /
+                              BATCH_GAP_BURST_DETECTION_FACTOR ):
+               Logging.log( INTERFACE_RX_BURST_DETECTED,
+                            burst, interBatchDuration,
+                            self.interfaceNo_ )
+
+            burst = txCounters[ 0 ] - prevLastTxCounter
+            if txMaxBurst > ( self.txThreshold_ * BATCH_SIZE *
+                              ( interBatchDuration / batchDuration ) /
+                              BATCH_GAP_BURST_DETECTION_FACTOR ):
+               Logging.log( INTERFACE_TX_BURST_DETECTED,
+                            burst, interBatchDuration,
+                            self.interfaceNo_ )
+
+         # Burst detection for batch reads
+         rxMaxBurst = 0
+         for i in xrange( BATCH_SIZE - 2 ):
+            burst = rxCounters[ i + 1 ] - rxCounters[ i ]
+            # counter rollOver
+            if burst < 0:
+               burst += 2**65
+            if burst > rxMaxBurst:
+               rxMaxBurst = burst
+         if rxMaxBurst > self.rxThreshold_:
+            Logging.log( INTERFACE_RX_BURST_DETECTED,
+                         rxMaxBurst, avgReadDuration,
+                         self.interfaceNo_ )
+
+         txMaxBurst = 0
+         for i in xrange( BATCH_SIZE - 2 ):
+            burst = txCounters[ i + 1 ] - txCounters[ i ]
+            # counter rollOver
+            if burst < 0:
+               burst += 2**65
+            if burst > txMaxBurst:
+               txMaxBurst = burst
+         if txMaxBurst > self.txThreshold_:
+            Logging.log( INTERFACE_TX_BURST_DETECTED,
+                         txMaxBurst, avgReadDuration,
+                         self.interfaceNo_ )
+
+         if prevLastReadTs:
+            _trace( '%s - checkBurst( %s ): batch_period: %dus, avg_read:%dus, '
+                    'batch_gap:%dus(%.2f%% of batch_period + batch_gap), '
+                    'rxMaxBurst:%d, txMaxBurst:%d' % 
+                    ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f'), 
+                      self.interfaceNo_,
+                      batchDuration,
+                      avgReadDuration, interBatchDuration, 
+                      ( interBatchDuration * 100.0 ) / ( lastReadTs  - prevLastReadTs ),
+                      rxMaxBurst, txMaxBurst ) )
+
+         prevLastReadTs = lastReadTs
+         prevLastRxCounter = rxCounters[ -1 ]
+         prevLastTxCounter = txCounters[ -1 ]
+
+def main():
+   # Create help string and parse cmd line
+   usage = 'usage: %prog [options] <interface number>'
+   op = optparse.OptionParser(usage=usage)
+   op.add_option( '-d', '--debug', dest='debug', action='store_true',
+                  help='print debug info' )
+   op.add_option( '-r', '--rx-tolerance', dest='rxTolerance', action='store',
+                  type='int', default=80, help='RX burst size (% of bandwidth) which '
+                  'triggers syslog messages (default=80)' )
+   op.add_option( '-t', '--tx-tolerance', dest='txTolerance', action='store',
+                  type='int', default=80, help='TX burst size (% of bandwidth) which '
+                  'triggers syslog messages (default=80)' )
+   opts, args = op.parse_args()
+ 
+   global debug
+   debug = opts.debug
+
+   # Check cmd line options
+   if not args:
+      op.error( 'You need to specify an interface number' )
+   elif len( args ) > 1:
+      op.error( 'Too many input arguments' )
+   elif not args[ 0 ].isdigit():
+      op.error( 'Invalid interface number' )
+
+   if not _verifyHwModel():
+      sys.exit( 'ERROR: This script only works for Arista 7150 line of products!')
+
+   Tac.setproctitle( 'ibm-%s' % args[ 0 ] )
+
+   _ = BurstMonitor( args[ 0 ], opts.rxTolerance, opts.txTolerance )
+
+if __name__ == '__main__':
+   main()
