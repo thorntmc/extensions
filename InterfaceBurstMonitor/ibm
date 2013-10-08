@@ -124,14 +124,9 @@ import Logging
 import PyClient
 import Tac
 
-
-
-
 SPEED_TO_BYTES = { 'speed1Gbps':  1024**3 / 8,
                    'speed10Gbps': 10 * 1024**3 / 8,
                    'speed40Gbps': 40 * 1024**3 / 8 }
-
-
 
 Ark.configureLogManager( 'ibm' )
 
@@ -149,33 +144,16 @@ Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
               explanation='Traffic burst detected on TX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
-
-
 debug = False
 def _trace( msg ):
    if debug:
       print msg
-
-def _physicalPortNo( pc, logicalPortNo ):
-   cmd = '''
-from FmApi import fmDbgMapLogicalPortToPhysical
-print fmDbgMapLogicalPortToPhysical( 0, %s )
-''' % logicalPortNo
-
-   try:
-      portNo = pc.execute( cmd ).split( '\n' )[ 0 ]
-   except PyClient.RpcError:
-      sys.exit( 'ERROR: physical port number could not be read!' )
-
-   _trace( '_physicalPortNo( %s ):%s' % ( logicalPortNo, portNo ) )
-   return portNo
 
 def _verifyHwModel():
    _trace( '_verifyHwModel()' )
    pc = PyClient.PyClient( 'ar', 'Sysdb' )
    fs = pc.root()[ 'ar' ][ 'Sysdb' ][ 'hardware' ][ 'entmib' ].fixedSystem
    return ( fs and re.match( '^DCS-715', fs.modelName ) )
-
 
 class BurstMonitor( object ):
 
@@ -189,40 +167,52 @@ class BurstMonitor( object ):
       self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold
       self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold
 
-      self.checkBurst()
-
-   def checkBurst( self ):
-
-      cmd = '''
+      self.cmd_ = '''
 from FmApi import fm6000GetPortMibCounters
 x = fm6000GetPortMibCounters( 0, %s )
 print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
-''' % _physicalPortNo( self.pc_, self.interfaceNo_ )
+''' % self.interfaceNo_
+
+      self.checkBurst()
+
+   def checkBurst( self ):
 
       prevTs = None
       prevRxCounter = None
       prevTxCounter = None
 
       while True:
-         data = self.pc_.execute( cmd ).split()
+         data = self.pc_.execute( self.cmd_ ).split()
 
          ts = int( data[ 0 ] )
          rxCounter = int( data[ 1 ] )
          txCounter = int( data[ 2 ] )
 
          if prevTs:
-            _trace( '%s - checkBurst( %s ): period: %dus,rx:%dB, tx:%dB' % 
-                    ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f' ), 
-                      self.interfaceNo_, 
-                      ts - prevTs,
-                      rxCounter - prevRxCounter, 
-                      txCounter - prevTxCounter ) )
+            duration = ts - prevTs
+            rxBurst = rxCounter - prevRxCounter
+            txBurst = txCounter - prevTxCounter
+
+            if rxBurst < 0:
+                  rxBurst += 2**65
+            if rxBurst > self.rxThreshold_:
+               Logging.log( INTERFACE_RX_BURST_DETECTED,
+                            rxBurst, duration, self.interfaceNo_ )
+
+            if txBurst < 0:
+                  txBurst += 2**65
+            if txBurst > self.txThreshold_:
+               Logging.log( INTERFACE_TX_BURST_DETECTED,
+                            txBurst, duration, self.interfaceNo_ )
+
+            if prevTs:
+               _trace( '%s - checkBurst( %s ): period: %dus,rx:%dB, tx:%dB' % 
+                       ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f' ), 
+                         self.interfaceNo_, duration, rxBurst, txBurst ) )
 
          prevTs = ts
          prevRxCounter = rxCounter
          prevTxCounter = txCounter
-
-
 
 def main():
    # Create help string and parse cmd line
