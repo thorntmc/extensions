@@ -133,14 +133,14 @@ Ark.configureLogManager( 'ibm' )
 INTERFACE_RX_BURST_DETECTED = None
 Logging.logD( id='INTERFACE_RX_BURST_DETECTED',
               severity=Logging.logWarning,
-              format='RX burst (%dB/~%dus) detected on port %d',
+              format='RX burst (%dB/%dus) detected on port %d',
               explanation='Traffic burst detected on RX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
 INTERFACE_TX_BURST_DETECTED = None
 Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
               severity=Logging.logWarning,
-              format='TX burst (%dB/~%dus) detected on port %d',
+              format='TX burst (%dB/%dus) detected on port %d',
               explanation='Traffic burst detected on TX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
