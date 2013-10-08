@@ -91,7 +91,7 @@
       the tolerance levels, use the --rx-tolerance/--tx-tolerance
       command line options:
       e.g. 
-         (bash:root)# /mnt/flash/ibm -s 60 -t 90 <interface number> &
+         (bash:root)# /mnt/flash/ibm -r 60 -t 90 <interface number> &
       
       In order to enable debugging output to stdout, use the '-d'
       command line option.
@@ -164,8 +164,8 @@ class BurstMonitor( object ):
 
       status = self.pc_.root()[ 'ar' ][ 'Sysdb' ][ 'interface' ][ 'status' ]
       speed = status[ 'eth' ][ 'intf' ][ 'Ethernet%s' % interfaceNo ].speed
-      self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold
-      self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold
+      self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold / 100
+      self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold / 100
 
       self.cmd_ = '''
 from FmApi import fm6000GetPortMibCounters
