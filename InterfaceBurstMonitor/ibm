@@ -124,23 +124,23 @@ import Logging
 import PyClient
 import Tac
 
-SPEED_TO_BYTES = { 'speed1Gbps':  1024**3 / 8,
-                   'speed10Gbps': 10 * 1024**3 / 8,
-                   'speed40Gbps': 40 * 1024**3 / 8 }
+SPEED_TO_BITS = { 'speed1Gbps':  1024**3,
+                   'speed10Gbps': 10 * 1024**3,
+                   'speed40Gbps': 40 * 1024**3 }
 
 Ark.configureLogManager( 'ibm' )
 
 INTERFACE_RX_BURST_DETECTED = None
 Logging.logD( id='INTERFACE_RX_BURST_DETECTED',
               severity=Logging.logWarning,
-              format='RX burst (%dB/%dus) detected on port %d',
+              format='RX burst (%s/%sms) detected on port %d',
               explanation='Traffic burst detected on RX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
 INTERFACE_TX_BURST_DETECTED = None
 Logging.logD( id='INTERFACE_TX_BURST_DETECTED',
               severity=Logging.logWarning,
-              format='TX burst (%dB/%dus) detected on port %d',
+              format='TX burst (%s/%sms) detected on port %d',
               explanation='Traffic burst detected on TX side of the interface.',
               recommendedAction=Logging.NO_ACTION_REQUIRED )
 
@@ -164,8 +164,8 @@ class BurstMonitor( object ):
 
       status = self.pc_.root()[ 'ar' ][ 'Sysdb' ][ 'interface' ][ 'status' ]
       speed = status[ 'eth' ][ 'intf' ][ 'Ethernet%s' % interfaceNo ].speed
-      self.rxThreshold_ = SPEED_TO_BYTES[ speed ] * rxThreshold / 100
-      self.txThreshold_ = SPEED_TO_BYTES[ speed ] * txThreshold / 100
+      self.rxThreshold_ = SPEED_TO_BITS[ speed ] * rxThreshold / 100
+      self.txThreshold_ = SPEED_TO_BITS[ speed ] * txThreshold / 100
 
       self.cmd_ = '''
 from FmApi import fm6000GetPortMibCounters
@@ -174,6 +174,20 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
 ''' % self.interfaceNo_
 
       self.checkBurst()
+
+   @staticmethod
+   def burstString( val ):
+      # rollover
+      if val < 0:
+         val += 2**65 * 8
+
+      if val < 10**5:
+         if val > 10**2:
+            return '%.2fKb' % ( val / 10**3 )
+         else:
+            return '%dB' % val
+      else:
+         return '%.2fKb' % ( val / 10**6 )
 
    def checkBurst( self ):
 
@@ -184,31 +198,30 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
       while True:
          data = self.pc_.execute( self.cmd_ ).split()
 
-         ts = int( data[ 0 ] )
-         rxCounter = int( data[ 1 ] )
-         txCounter = int( data[ 2 ] )
+         ts = float( data[ 0 ] )
+         rxCounter = float( data[ 1 ] ) * 8
+         txCounter = float( data[ 2 ] ) * 8
 
          if prevTs:
-            duration = ts - prevTs
+            duration = float( ts - prevTs ) / 1000
             rxBurst = rxCounter - prevRxCounter
             txBurst = txCounter - prevTxCounter
 
-            if rxBurst < 0:
-                  rxBurst += 2**65
-            if ( rxBurst * 10.0**6 / duration ) > self.rxThreshold_:
+            rxString = self.burstString( rxBurst )
+            if ( rxBurst * 10.0**3 / duration ) > self.rxThreshold_:
                Logging.log( INTERFACE_RX_BURST_DETECTED,
-                            rxBurst, duration, self.interfaceNo_ )
+                            rxString, duration, self.interfaceNo_ )
 
-            if txBurst < 0:
-                  txBurst += 2**65
-            if ( txBurst * 10.0**6 / duration ) > self.txThreshold_:
+            txString = self.burstString( txBurst )
+            if ( txBurst * 10.0**3 / duration ) > self.txThreshold_:
                Logging.log( INTERFACE_TX_BURST_DETECTED,
-                            txBurst, duration, self.interfaceNo_ )
+                            txString, duration, self.interfaceNo_ )
 
             if prevTs:
-               _trace( '%s - checkBurst( %s ): period: %dus,rx:%dB, tx:%dB' % 
+               _trace( '%s - checkBurst( %s ): period: %.2fms,rx:%s, tx:%s' % 
                        ( datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S.%f' ), 
-                         self.interfaceNo_, duration, rxBurst, txBurst ) )
+                         self.interfaceNo_, duration, 
+                         rxString, txString ) )
 
          prevTs = ts
          prevRxCounter = rxCounter
