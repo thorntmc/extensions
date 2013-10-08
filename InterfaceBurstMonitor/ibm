@@ -96,7 +96,7 @@
       command line option.
       e.g.
          (bash:root)# /mnt/flash/ibm -d ...
-      Note that the output can be quite verbouse so it is recommended
+      Note that the output can be quite verbose so it is recommended
       that this option is used with caution, and only for debugging
       purposes.
 
