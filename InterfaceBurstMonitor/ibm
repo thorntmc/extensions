@@ -124,9 +124,9 @@ import Logging
 import PyClient
 import Tac
 
-SPEED_TO_BITS = { 'speed1Gbps':  1024**3,
-                   'speed10Gbps': 10 * 1024**3,
-                   'speed40Gbps': 40 * 1024**3 }
+SPEED_TO_BITS = { 'speed1Gbps':  ( 2**10 )**3,
+                  'speed10Gbps': 10 * ( 2**10 )**3,
+                  'speed40Gbps': 40 * ( 2**10 )**3 }
 
 Ark.configureLogManager( 'ibm' )
 
@@ -176,16 +176,15 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
       self.checkBurst()
 
    @staticmethod
-   def burstString( val ):
+   def _burstString( val ):
       # rollover
       if val < 0:
          val += 2**65 * 8
 
-      if val < 10**4:
-         if val < 10:
-            return '%db' % val
-         else:
-            return '%.2fKb' % ( val / 10**3 )
+      if val < 10:
+         return '%db' % val
+      elif val < 10**4:
+         return '%.2fKb' % ( val / 10**3 )
       else:
          return '%.2fMb' % ( val / 10**6 )
 
@@ -203,16 +202,16 @@ print x.timestamp, x.cntRxGoodOctets, x.cntTxOctets
          txCounter = float( data[ 2 ] ) * 8
 
          if prevTs:
-            duration = float( ts - prevTs ) / 1000
+            duration = float( ts - prevTs ) / 1000           # miliseconds
             rxBurst = rxCounter - prevRxCounter
             txBurst = txCounter - prevTxCounter
 
-            rxString = self.burstString( rxBurst )
+            rxString = self._burstString( rxBurst )
             if ( rxBurst * 10.0**3 / duration ) > self.rxThreshold_:
                Logging.log( INTERFACE_RX_BURST_DETECTED,
                             rxString, duration, self.interfaceNo_ )
 
-            txString = self.burstString( txBurst )
+            txString = self._burstString( txBurst )
             if ( txBurst * 10.0**3 / duration ) > self.txThreshold_:
                Logging.log( INTERFACE_TX_BURST_DETECTED,
                             txString, duration, self.interfaceNo_ )
